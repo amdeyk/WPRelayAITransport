@@ -1,0 +1,15 @@
+.auth-shell {
+  background: linear-gradient(180deg, #fef3c7, #ffffff);
+  min-height: 100vh;
+  padding: 64px 24px;
+}
+
+.auth-card {
+  background: #111827;
+  border-radius: 24px;
+  color: #fff;
+  margin: 0 auto;
+  max-width: 560px;
+  padding: 48px;
+}
+

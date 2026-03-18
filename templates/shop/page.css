@@ -1,0 +1,19 @@
+.shop-shell {
+  background: #f9fafb;
+  min-height: 100vh;
+  padding: 48px 24px;
+}
+
+.product-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.card {
+  background: #fff;
+  border-radius: 18px;
+  min-height: 220px;
+  padding: 20px;
+}
+

@@ -1,0 +1,36 @@
+.landing {
+  font-family: Georgia, serif;
+  margin: 0 auto;
+  max-width: 960px;
+  padding: 64px 24px;
+}
+
+.hero {
+  background: linear-gradient(135deg, #0f172a, #1d4ed8);
+  border-radius: 24px;
+  color: #fff;
+  padding: 72px 48px;
+}
+
+.eyebrow {
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.button {
+  background: #facc15;
+  border-radius: 999px;
+  color: #111827;
+  display: inline-block;
+  margin-top: 16px;
+  padding: 12px 20px;
+  text-decoration: none;
+}
+
+.grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 32px;
+}
+

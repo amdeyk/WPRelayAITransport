@@ -1,0 +1,17 @@
+.auth-shell {
+  align-items: center;
+  background: radial-gradient(circle at top, #1e293b, #020617);
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-card {
+  background: #fffdf7;
+  border-radius: 20px;
+  max-width: 420px;
+  padding: 40px 32px;
+  width: 100%;
+}
+

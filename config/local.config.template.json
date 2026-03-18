@@ -1,0 +1,49 @@
+{
+  "site_name": "example.com",
+  "site_url": "https://example.com",
+  "token": "REPLACE_ME",
+  "project_path": "~/wrs-sites/example-com",
+  "page_mode": "html",
+  "css_mode": "inline",
+  "default_status": "draft",
+  "ai_cli_command": "claude",
+  "ai_operation_mode": "assisted",
+  "wc_consumer_key": "",
+  "wc_consumer_secret": "",
+  "deploy_order": [
+    "migrations",
+    "media",
+    "cpt",
+    "pages",
+    "posts",
+    "forms",
+    "cron"
+  ],
+  "modules": {
+    "content": true,
+    "media": true,
+    "database": true,
+    "members": false,
+    "email": false,
+    "forms": false,
+    "woocommerce": false,
+    "cpt": false,
+    "cron": false
+  },
+  "circuit_breaker": {
+    "consecutive_failure_threshold": 3,
+    "failure_window_minutes": 10,
+    "partial_counts_as_failure": true,
+    "human_pin_to_reset": true,
+    "human_pin": "123456",
+    "block_reads_when_open": false
+  },
+  "checkpoint": {
+    "auto_checkpoint": true,
+    "local_copy": true
+  },
+  "reconcile": {
+    "auto_before_ai": false
+  }
+}
+

@@ -1,0 +1,21 @@
+.contact-layout {
+  display: grid;
+  gap: 32px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  margin: 0 auto;
+  max-width: 960px;
+  padding: 56px 24px;
+}
+
+.eyebrow {
+  color: #047857;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.form-shell {
+  background: #ecfeff;
+  border-radius: 24px;
+  padding: 32px;
+}
+

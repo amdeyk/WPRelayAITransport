@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyc.*
+.pytest_cache/
+.venv/
+venv/
+env/
+.DS_Store
+
+config/local.config.json
+config/plugin.config.json
+setup/output/
+media/
+*.log
+_home/
+sample-site/

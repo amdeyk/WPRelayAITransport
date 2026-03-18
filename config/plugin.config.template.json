@@ -1,0 +1,39 @@
+{
+  "site_name": "example.com",
+  "site_url": "https://example.com",
+  "token_hash": "REPLACE_ME",
+  "allowed_ips": [
+    "127.0.0.1"
+  ],
+  "require_https": true,
+  "replay_window_seconds": 30,
+  "rate_limit_per_minute": 20,
+  "max_output_bytes": 524288,
+  "exec_timeout_seconds": 30,
+  "page_mode": "html",
+  "css_mode": "inline",
+  "modules": {
+    "master_enabled": true,
+    "content": true,
+    "media": true,
+    "database": true,
+    "members": false,
+    "email": false,
+    "forms": false,
+    "woocommerce": false,
+    "cpt": false,
+    "cron": false
+  },
+  "telemetry": {
+    "capture_php_errors": true,
+    "capture_memory": true
+  },
+  "checkpoint": {
+    "enabled": true
+  },
+  "journal": {
+    "enabled": true
+  },
+  "log_retention_count": 500
+}
+

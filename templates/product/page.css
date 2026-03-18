@@ -1,0 +1,25 @@
+.product-shell {
+  display: grid;
+  gap: 32px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin: 0 auto;
+  max-width: 1100px;
+  padding: 56px 24px;
+}
+
+.gallery {
+  display: grid;
+  gap: 16px;
+}
+
+.shot {
+  background: #e5e7eb;
+  border-radius: 18px;
+  min-height: 180px;
+  padding: 24px;
+}
+
+.primary {
+  min-height: 320px;
+}
+

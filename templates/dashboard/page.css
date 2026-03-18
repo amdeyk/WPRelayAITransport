@@ -1,0 +1,19 @@
+.dashboard {
+  background: #f8fafc;
+  min-height: 100vh;
+  padding: 40px 24px;
+}
+
+.panel-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.panel {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px;
+  padding: 24px;
+}
+

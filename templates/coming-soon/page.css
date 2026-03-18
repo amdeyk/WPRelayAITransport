@@ -1,0 +1,25 @@
+.coming-shell {
+  align-items: center;
+  background: linear-gradient(135deg, #111827, #7c2d12);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  text-align: center;
+}
+
+.waitlist {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.waitlist input,
+.waitlist button {
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 18px;
+}
+

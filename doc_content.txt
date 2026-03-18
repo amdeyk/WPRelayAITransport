@@ -1,0 +1,1329 @@
+WP REMOTE SHELL
+Master Product Document
+CLI-Driven WordPress Platform  ·  AI-Native  ·  Fault-Tolerant  ·  GitHub-Hosted
+Document type
+Consolidated Master Specification
+Version
+1.0 — Final (consolidates spec iterations v1.0 through v5.0)
+Classification
+Confidential — Do Not Distribute
+Product
+WP Remote Shell (WRS)
+Primary operator
+AI CLI tool (Claude CLI or equivalent) supervised by human
+Target host
+BigRock Shared / VPS WordPress (any standard WordPress install)
+Distribution
+GitHub public repo — clone, wizard-install, operate from local terminal
+Page builder
+None — HTML/CSS injected directly. No Elementor. No Gutenberg dependency.
+Auth model
+HMAC-SHA256 + Time-based Salt + IP Allowlist (8-layer security model)
+Status
+Ready for Build
+Document Scope
+This document is the single authoritative reference for the WP Remote Shell product. It consolidates all design discussions, architectural decisions, security specifications, capability modules, fault tolerance design, and build guidance into one place. It supersedes all previous versioned spec documents (v1.0 through v5.0).
+PART A
+Product Vision & Core Philosophy
+1. What WP Remote Shell Is
+WP Remote Shell (WRS) is a complete CLI-driven WordPress development and operations platform. It allows you to build, update, and manage every aspect of a WordPress website — pages, content, membership tiers, email, forms, WooCommerce products, database tables, scheduled tasks — entirely from your local terminal. You never need to log into WordPress Admin, cPanel, or FTP for day-to-day operations.
+WRS is designed to be operated by an AI CLI tool (such as Claude CLI) under human supervision. It is also fully usable by a human operator directly. The system is built around the assumption that when AI is driving operations, the infrastructure must be fault-tolerant by design — not by convention.
+What WRS replaces
+WP Admin for daily operations, FTP/cPanel for file management, phpMyAdmin for DB work, manual plugin configuration for features like membership and email
+What WRS is not
+A visual page builder, a hosting provider, a backup system, or a WordPress theme. It is an operations and deployment platform.
+Who operates it
+Primarily: an AI CLI tool (Claude CLI or equivalent) issuing structured commands. Secondarily: you, the human, via direct CLI commands or in supervision of the AI.
+Where it lives
+GitHub repo (the code) + local machine (the CLI tool + your site files) + WordPress server (the plugin that receives commands)
+2. Core Design Principles
+Principle
+What it means
+Example
+Server is a runtime
+WordPress is the rendering engine. Your local machine holds the source of truth. WRS is the deployment bridge between them.
+Site content lives in local files, not in WP Admin
+Content as files
+Every page, post, form, email template, membership tier, and product definition is a local file — version-controlled in git.
+git log pages/home.html — full history of every page change
+No builder dependency
+Pages are built as HTML/CSS files. Any tool that produces HTML can feed WRS — including AI CLIs. No proprietary format to learn.
+AI generates HTML, WRS pushes it. Neither depends on the other.
+Configurable, not hardcoded
+Zero hardcoded values. A wizard generates all config. The same codebase works for any WordPress site on any host.
+wrs use client-site.com — switch between sites in one command
+Fault-tolerant by design
+When AI is the operator, failures must be detected, logged, and halted automatically. The system never allows a failure loop.
+Circuit breaker halts AI after 3 consecutive failures
+Repeatable operations
+Every operation is idempotent — safe to re-run. The deploy system only pushes what has changed.
+wrs deploy --dry-run always shows what would change first
+Observable
+Every operation produces structured telemetry. The AI always knows what the server actually did, not just whether the HTTP call succeeded.
+Server returns db_rows_affected, php_errors, recovery_hint
+Human retains control
+The AI cannot change its own operation mode, override the circuit breaker, or reset after a failure. Only the human can.
+wrs circuit-breaker reset requires human PIN confirmation
+PART B
+System Architecture
+3. System Architecture
+3.1 The Three-Layer Model
+Layer 1 — Secure Transport
+HTTPS-only bridge between local machine and WordPress server. Every request is HMAC-SHA256 signed with a time-based salt. Handles auth, IP filtering, rate limiting, and replay protection. This is the v1.0 security foundation — all other layers build on top of it.
+Layer 2 — Plugin Engine
+A PHP module registry installed as a WordPress plugin. One module per capability domain (content, media, database, members, email, forms, WooCommerce, CPT, cron). Each module exposes REST endpoints. The plugin also handles server-side journaling, telemetry generation, and checkpointing.
+Layer 3 — CLI Toolkit
+A Python CLI on your local machine. One command namespace per module. Manages the local operation journal, circuit breaker state, checkpoint downloads, AI context feed generation, and state reconciliation. All user-facing commands are here.
+3.2 Request Flow — Every Write Operation
+Step
+Side
+Action
+1
+Local
+CLI writes PENDING journal entry (op_id, operator, payload_hash) — before any HTTP is sent
+2
+Local
+CLI requests a checkpoint: POST /wrs/v1/checkpoint/create {op_id, op_type, targets}
+3
+Server
+Plugin captures current state of affected data, writes checkpoint file, returns checkpoint_id
+4
+Local
+CLI updates journal with checkpoint_id, sets status → IN_FLIGHT
+5
+Server
+Plugin receives operation, writes server journal entry, begins execution
+6
+Server
+Plugin executes the operation (DB writes, file writes, WP API calls)
+7
+Server
+Plugin writes final server journal entry (SUCCESS/FAILED/PARTIAL), builds telemetry response
+8
+Local
+CLI receives telemetry — checks db_rows_affected, content echo, file checksums for silent failures
+9
+Local
+CLI updates local journal with final status + full server_outcome block
+10
+Local
+CLI evaluates circuit breaker (increment or reset failure counter)
+11
+Local
+CLI formats result for human terminal output or AI context feed
+3.3 Dual Content Path
+Track A — HTML/CSS Injection
+For designed pages: landing pages, home, about, services, login, register. HTML/CSS files injected directly into WordPress post_content. No page builder. Any tool that produces HTML works — including AI CLIs. This is the primary content path.
+Track B — WP REST API
+For structured content: blog posts, CPT entries (team, FAQs, testimonials), menus, media. Standard WordPress REST API. JSON-format local files. Both tracks coexist on the same site and deploy through the same system.
+3.4 GitHub Repo → Local → WordPress
+git clone the WRS repo to your local machine
+Run python setup/wizard.py — generates all config, builds the plugin ZIP
+Upload plugin ZIP to WordPress (the only browser step — once ever)
+Run wrs setup deploy-config — pushes server config via the secure channel
+Run wrs status — confirms full handshake
+All further operations from local terminal only
+PART C
+Security Model
+4. Eight-Layer Security Model
+⚠️  This plugin creates a privileged HTTP endpoint on your server. It must be treated with the same seriousness as an SSH private key. All eight layers are mandatory. None may be disabled in production.
+Layer
+Mechanism
+Config Field
+What It Blocks
+1 — HTTPS only
+Plugin rejects all HTTP requests with 403 before any auth check
+require_https: true
+Plaintext interception, credential sniffing
+2 — IP allowlist
+Request IP checked against allowed_ips array — before token check
+allowed_ips: ['x.x.x.x']
+Requests from unknown sources
+3 — Token verification
+X-WRS-Token header verified against bcrypt hash using constant-time comparison
+token_hash in plugin.config.json
+Brute force, credential stuffing
+4 — HMAC-SHA256 signing
+Every request: HMAC(token, endpoint|timestamp|sorted_payload). Verified by plugin.
+Enforced in auth.php
+Request tampering, man-in-the-middle
+5 — Time-salt anti-replay
+X-WRS-Time must be within ±replay_window_seconds. Same payload hash rejected twice.
+replay_window_seconds: 30
+Replay attacks, captured request reuse
+6 — Rate limiting
+Max rate_limit_per_minute requests per IP. Returns 429 on excess.
+rate_limit_per_minute: 20
+Brute force, DoS
+7 — Command blocklist
+Hardcoded block of catastrophic shell patterns (rm -rf /, mkfs, dd if=/dev/zero, etc.)
+Hardcoded — not configurable
+Accidental or malicious destructive commands
+8 — Master toggle
+When off, all endpoints return 404. No information leakage.
+modules.master_enabled in plugin config
+Exposure when not actively using
+4.1 Token Architecture
+Generation
+openssl rand -hex 32 — 64-char hex, 256 bits of entropy. Generated by wizard.
+Local storage
+Plaintext token in ~/.wrs/sites/<site>/local.config.json — used to sign requests. Never in the GitHub repo.
+Server storage
+bcrypt hash of the token in plugin.config.json — plugin verifies against hash. Plaintext never reaches the server.
+Rotation
+python setup/wizard.py --rotate-token — new token generated, both sides updated atomically in one command.
+If leaked
+Run token rotation immediately. Old hash is replaced on server within seconds.
+wp-config.php line
+One define() statement: WRS_CONFIG_PATH pointing to plugin.config.json. Only constant in the codebase.
+4.2 Configuration Files — Security Rules
+plugin.config.json
+Lives on server at WRS_CONFIG_PATH. Contains token_hash, allowed_ips, module config. Never in git. Deployed via wrs setup deploy-config.
+local.config.json
+Lives at ~/.wrs/sites/<site>/local.config.json. Contains plaintext token. Never in git. Never in the project folder.
+.gitignore rules
+Both config files are gitignored by default. The repo contains only config templates with placeholder values.
+config/ directory
+Contains .template.json files only — placeholders. Generated files are in ~/.wrs/ (local) and on the server. Never overlap.
+PART D
+Setup, Configuration & Install Flow
+5. Setup Wizard & Install Flow
+5.1 First-Time Installation
+Step
+Location
+Action
+1
+Local
+git clone https://github.com/you/wp-remote-shell
+2
+Local
+pip install -r requirements.txt
+3
+Local
+python setup/wizard.py — interactive setup begins
+4
+Wizard
+Enter WordPress site URL
+5
+Wizard
+Auto-generate 64-char hex secret token (or enter your own)
+6
+Wizard
+Enter IP allowlist — wizard auto-detects your current public IP
+7
+Wizard
+Select which modules to enable (checklist)
+8
+Wizard
+Choose page mode: html (default, recommended) or elementor
+9
+Wizard
+Enter local project path (default: ~/wrs-sites/sitename)
+10
+Wizard
+Optional: WooCommerce API keys if WooCommerce module enabled
+11
+Wizard
+Optional: AI CLI command (e.g. claude or path to tool)
+12
+Wizard
+Generates: local.config.json, plugin.config.json, wp-remote-shell.zip, wp-config-line.txt
+13
+WordPress
+Upload wp-remote-shell.zip via WP Admin > Plugins > Add New > Upload — BROWSER STEP
+14
+WordPress
+Activate the plugin — BROWSER STEP
+15
+WordPress
+Paste the WRS_CONFIG_PATH line into wp-config.php (wizard provides exact text) — cPanel File Manager
+16
+Local
+wrs setup deploy-config — uploads plugin.config.json to server
+17
+Local
+wrs status — verifies connection, plugin, all modules
+Steps 13–15 are the only browser/cPanel steps in the entire product lifecycle. Everything before and after is CLI.
+5.2 Configuration Files — Full Schema
+local.config.json (local machine — gitignored)
+site_url
+Full WordPress URL: 'https://yoursite.com'
+token
+Plaintext secret token
+project_path
+Absolute local path to your site project folder
+page_mode
+html (default) or elementor
+css_mode
+inline (CSS in <style> tag in HTML) or enqueue (CSS saved as file, registered via WP)
+default_status
+draft or publish — default for new pages/posts. Recommended: draft
+ai_cli_command
+Shell command to invoke AI CLI: 'claude' or full path
+ai_operation_mode
+supervised / assisted / autonomous. Default: assisted
+wc_consumer_key
+WooCommerce REST API consumer key (if WooCommerce enabled)
+wc_consumer_secret
+WooCommerce REST API consumer secret
+circuit_breaker.consecutive_failure_threshold
+Failures before circuit opens. Default: 3
+circuit_breaker.failure_window_minutes
+Window for counting failures. Default: 10
+circuit_breaker.human_pin_to_reset
+Require human PIN to reset OPEN circuit. Default: true
+checkpoint.auto_checkpoint
+Snapshot before every write. Default: true
+checkpoint.local_copy
+Download checkpoint to local machine. Default: true
+reconcile.auto_before_ai
+Run reconcile --all before each AI session. Default: false (recommended: true)
+deploy_order
+Array — order modules deploy: ['migrations','media','cpt','pages','posts','forms','cron']
+modules
+Per-module local overrides: { woocommerce: false }
+plugin.config.json (server — gitignored, deployed via CLI)
+token_hash
+bcrypt hash of the secret token — never plaintext
+allowed_ips
+Array of authorised IPv4/IPv6 addresses
+require_https
+true — reject HTTP. Set false only for local dev.
+replay_window_seconds
+Timestamp tolerance for HMAC. Default: 30
+rate_limit_per_minute
+Max requests per IP per minute. Default: 20
+max_output_bytes
+Max shell command output. Default: 524288 (512KB)
+exec_timeout_seconds
+Max shell command duration. Default: 30
+page_mode
+html or elementor — must match local config
+css_mode
+inline or enqueue — must match local config
+modules
+Per-module enable/disable: { content:true, media:true, database:true, members:true, email:true, forms:true, woocommerce:false, cpt:true, cron:true }
+telemetry.capture_php_errors
+Capture PHP errors in telemetry response. Default: true
+telemetry.capture_memory
+Include peak memory in telemetry. Default: true
+checkpoint.enabled
+Server-side checkpoint creation. Default: true
+journal.enabled
+Server-side journal writing. Default: true
+log_retention_count
+Request log entries to keep. Default: 500
+5.3 Reconfiguration & Maintenance
+Rotate token
+python setup/wizard.py --rotate-token — generates new token, updates both sides, redeploys
+Change IP allowlist
+python setup/wizard.py --only ips
+Enable/disable module
+python setup/wizard.py --only modules
+After git pull (upgrade)
+python setup/wizard.py --upgrade — migrates config schema to new version
+Redeploy config only
+wrs setup deploy-config — re-sends plugin.config.json without re-running full wizard
+Add new site
+python setup/wizard.py --new-site
+Switch active site
+wrs use mysite.com
+List all sites
+wrs sites
+PART E
+Page Building & Content Management
+6. HTML/CSS Page Building
+6.1 How It Works
+WRS injects HTML directly into WordPress post_content. There is no page builder dependency. The WordPress database stores your HTML as-is, and the active theme renders it inside the theme template. For full-width control, canvas mode bypasses the theme entirely.
+Page format
+Standard .html file — any valid HTML. One file per page in your project's pages/ folder.
+CSS format
+Standard .css file. Two modes: inline (CSS prepended as <style> tag in HTML) or enqueue (CSS saved as a file and wp_enqueue_style'd for that page only).
+WP storage
+post_content = HTML. _wrs_page_mode = 'html' meta prevents other editors from overwriting it.
+Shortcode support
+WordPress do_shortcode() is applied — PMPro, CF7, WooCommerce shortcodes embedded in HTML work normally.
+Canvas mode
+wrs page build --canvas — renders with wrs-canvas.php template: only your HTML, no theme header/footer/sidebar. Full visual control.
+SEO compatibility
+Pages are standard WP pages — Yoast/RankMath SEO meta works. wrs page set-meta writes to their fields.
+6.2 Page CLI Commands
+Command
+Description
+wrs page build --file page.html --css page.css --slug about --title 'About Us'
+Create page, inject HTML+CSS, set metadata. Defaults to draft.
+wrs page build ... --publish
+Build and publish immediately
+wrs page build ... --canvas
+Build with canvas mode — no theme chrome
+wrs page update --slug about --file page.html
+Replace post_content
+wrs page update-css --slug about --css page.css
+Update CSS without touching HTML
+wrs page get --slug about
+Download current live HTML to local file
+wrs page diff --slug about --file page.html
+Text diff: local vs live server HTML
+wrs page list
+All pages: id, slug, title, status, mode, modified date
+wrs page publish --slug about
+Set post_status = publish
+wrs page clone --slug about --new-slug about-v2
+Duplicate post + all meta
+wrs page delete --slug about
+Move to trash
+wrs page set-image --slug about --media-id 42
+Set featured image
+wrs page set-meta --slug about --title 'SEO title' --description 'desc'
+Set SEO meta fields
+wrs page generate --slug services --prompt '...'
+AI CLI generates HTML, WRS pushes it
+wrs page ai-update --slug services --instruction 'Add pricing section'
+Pull HTML → AI edits → push result
+6.3 AI CLI Page Building Workflow
+WRS acts as the deployment bridge between your AI CLI tool and WordPress. The AI generates HTML. WRS pushes it. Neither depends on the other.
+Manual workflow (AI CLI → local file → WRS push)
+Open your AI CLI (e.g. claude)
+Prompt: 'Create a landing page for a fitness app — hero section, features grid, testimonials, pricing table, CTA. Save to pages/home.html and pages-css/home.css'
+Review the generated files. Edit if needed.
+wrs page build --file pages/home.html --css pages-css/home.css --slug home --title 'Home' --publish
+Page is live at yoursite.com/
+Integrated workflow (wrs page generate)
+Command
+wrs page generate --slug home --prompt 'Landing page for a fitness app...' --publish
+What happens
+CLI calls ai_cli_command with the prompt, captures output HTML/CSS, pushes to WordPress with full checkpointing and telemetry
+Review option
+--review flag pauses after generation for you to inspect before pushing
+Update
+wrs page ai-update --slug home --instruction 'Replace the hero background with a dark gradient and update the CTA text to Get Started Free'
+6.4 HTML Template Library
+The repo includes starter HTML/CSS templates for common page types in the templates/ folder. Designed as starting prompts for AI CLI customisation:
+Template
+File
+Contents
+Landing page
+templates/landing-page/
+Hero + features + testimonials + pricing + CTA + footer. Responsive, semantic HTML5.
+Blog post
+templates/blog-post/
+Article layout with header, content area, author bio, related posts placeholder.
+Login page
+templates/login/
+Centred login form. <!-- WRS_SHORTCODE: pmpro_login --> placeholder.
+Register page
+templates/register/
+Registration/checkout form. <!-- WRS_SHORTCODE: pmpro_checkout level='X' --> placeholder.
+Member dashboard
+templates/dashboard/
+Members-only account area. PMPro account shortcode placeholder.
+Contact page
+templates/contact/
+Contact form layout. CF7 shortcode placeholder.
+Product page
+templates/product/
+WooCommerce single product wrapper.
+Shop page
+templates/shop/
+WooCommerce shop/archive wrapper.
+Coming soon
+templates/coming-soon/
+Full-screen canvas mode page with email capture.
+6.5 Post & Navigation Management
+Create blog post
+wrs post create --file post.html --title 'Title' --category tech --publish
+Update post
+wrs post update --slug my-post --file post.html
+Schedule post
+wrs post schedule --slug my-post --time '2025-09-01T09:00'
+AI generate post
+wrs post generate --title 'Post Title' --prompt '...' --publish
+Set nav menu
+wrs menu set --location primary --file menus/primary.json
+Widget areas
+wrs widget set --area sidebar-1 --file widgets/sidebar.json
+PART F
+Capability Modules
+7. Media Module
+Command
+Description
+wrs media upload --file hero.jpg --title 'Hero'
+Upload file. Returns { id, url } — use id/url in HTML <img> tags.
+wrs media upload-dir --dir ./images/
+Upload entire folder. Creates/updates media-map.json: { filename: { id, url } }
+wrs media list --type image --limit 50
+List media library: id, url, title, alt, date
+wrs media get --id 42
+Get all registered sizes + URLs for an attachment
+wrs media set-alt --id 42 --text 'Description'
+Set SEO alt text
+wrs media delete --id 42
+Remove DB entry + physical file + all thumbnails
+wrs media regen --id 42 (or --all)
+Regenerate thumbnail sizes after theme changes
+wrs media lookup --filename hero.jpg
+Look up WP ID + URL from local media-map.json — no server call
+Media workflow: Upload first with wrs media upload. Use the returned URL directly in HTML: <img src='https://yoursite.com/wp-content/uploads/...' alt='...'>. Or pass media-map.json to your AI CLI: 'Use image URLs from media-map.json when writing image tags'.
+8. Database Module
+Command
+Description
+wrs db query --sql 'SELECT...'
+Run SQL query. Returns JSON. Write ops require --allow-write flag.
+wrs db create-table --file schema/members.sql
+CREATE TABLE IF NOT EXISTS — idempotent
+wrs db migrate
+Run all pending migration files from project migrations/ folder
+wrs db migrate --status
+Show applied vs pending migrations
+wrs db migrate --dry-run
+Show SQL without executing
+wrs db rollback --steps 1
+Run DOWN section of last migration
+wrs db seed --file seeds/tiers.json
+Bulk INSERT from JSON array
+wrs db export --table wp_wrs_members --format csv
+Download table as local CSV
+wrs db import --table wp_wrs_members --file data.csv
+Bulk INSERT/UPDATE from CSV
+wrs db get-option / set-option --key k --value v
+Read/write wp_options
+wrs db get-meta / set-meta --post-id 5 --key k --value v
+Read/write wp_postmeta
+Migration file format
+NNN_description.sql — e.g. 001_create_members_table.sql
+File structure
+-- UP\n<SQL>\n\n-- DOWN\n<reverse SQL>
+Tracking
+wp_wrs_migrations table: { id, filename, checksum, applied_at }
+Safety rule
+All UP migrations must use IF NOT EXISTS. Run --dry-run first. Test locally before production.
+9. Members & Membership Module
+Dependency: Paid Memberships Pro (PMPro) — free, WordPress.org. WRS wraps its PHP API. PMPro handles all payment processing (Stripe, PayPal etc.). WRS configures it.
+Command
+Description
+wrs members create-tier --file tiers/gold.yaml
+Create membership tier — calls pmpro_addLevel()
+wrs members update-tier --id 2 --file tiers/gold.yaml
+Update tier config
+wrs members list-tiers
+List all tiers from pmpro_membership_levels
+wrs members create-user --email x@y.com --role subscriber
+Create WP user
+wrs members assign-tier --user 12 --tier 2
+Assign tier — pmpro_changeMembershipLevel()
+wrs members expire --user 12
+Expire membership now
+wrs members list --tier 2 --status active
+List members by tier/status
+wrs members protect --slug /premium --tier 2
+Restrict page to tier members only
+wrs members unprotect --slug /premium
+Remove restriction
+wrs members create-login-page
+Build login page HTML + embed [pmpro_login] shortcode
+wrs members create-register-page --tier 2
+Build registration page + [pmpro_checkout level='2']
+wrs members create-account-page
+Build member dashboard page + [pmpro_account]
+wrs members set-login-redirect --url /dashboard
+Redirect after successful login
+wrs members set-gateway --gateway stripe --file cfg.json
+Configure Stripe payment gateway
+Tier YAML fields
+name, description, price, billing_period (Month/Year/Lifetime), trial_days, trial_amount, expiry_number, expiry_period, protected_pages[], protected_categories[], after_checkout_url, welcome_email
+Shortcode pattern
+Login/register/account pages are HTML templates with PMPro shortcodes embedded — same HTML/CSS injection pipeline as all other pages
+10. Email Module
+Dependency: WP Mail SMTP (free, WordPress.org). WRS configures it via wp_options. All WordPress plugins (PMPro, CF7, WooCommerce) use wp_mail() automatically once SMTP is configured.
+Command
+Description
+wrs email config-smtp --provider sendgrid --api-key <key>
+Configure SMTP. Providers: Gmail, Outlook, SendGrid, Mailgun, Brevo, SMTP.com, custom.
+wrs email test --to admin@site.com
+Send live test via wp_mail() — shows pass/fail + error detail
+wrs email create-template --name welcome --file emails/welcome.html
+Store template in wp_wrs_email_templates
+wrs email update-template --name welcome --file emails/welcome.html
+Overwrite stored template
+wrs email preview --name welcome --vars '{"name":"Test"}'
+Render template with vars to stdout
+wrs email send --to x@y.com --template welcome --vars vars.json
+Merge vars + send via wp_mail()
+wrs email assign-hook --hook user_register --template welcome
+Auto-fire template on WP action hook
+wrs email log --limit 50
+Last N sends: recipient, template, status, timestamp
+Template format
+.html with inline CSS. First line: <!-- Subject: Your subject here -->
+Variables
+Mustache-style: {{first_name}}, {{site_url}}, {{login_url}}, {{tier_name}}, {{custom_var}}
+11. Forms Module
+Dependency: Contact Form 7 (CF7) — free, WordPress.org. Forms embedded in HTML pages via shortcode: [contact-form-7 id='...' title='Contact']. WRS provides the embed code via wrs forms embed-code.
+Command
+Description
+wrs forms create --file forms/contact.yaml
+Create CF7 form, returns shortcode for embedding in HTML
+wrs forms update --slug contact --file forms/contact.yaml
+Update field schema
+wrs forms embed-code --slug contact
+Returns shortcode string to paste in HTML template
+wrs forms submissions --slug contact --limit 20
+Latest submissions as JSON
+wrs forms export --slug contact --format csv
+Full submission history as CSV download
+wrs forms set-notify --slug contact --to admin@site.com
+Email notification on each submission
+wrs forms set-webhook --slug contact --url https://...
+POST submission JSON to external URL (Zapier, n8n etc.)
+wrs forms set-captcha --slug contact --type recaptcha-v3
+Enable reCAPTCHA v3
+Form YAML fields
+form_name, title, fields[{name, label, type, required, validation}], spam_protection{honeypot, recaptcha_v3}, on_submit[notify_email, store_db, webhook, redirect], success_message or redirect_url, conditional show_if rules
+Field types
+text, email, tel, number, textarea, select, checkbox, radio, file, date, hidden
+12. WooCommerce Module
+Dependency: WooCommerce (free, WordPress.org). WRS uses WooCommerce REST API v3 for products/orders/coupons and direct DB operations for gateway/shipping settings not exposed via REST. WC API keys stored in local.config.json.
+Command
+Description
+wrs woo create-product --file products/item.json
+Create product — WC REST POST /products
+wrs woo update-product --id 55 --file products/item.json
+Update product
+wrs woo list-products --status publish --limit 50
+List products
+wrs woo delete-product --id 55 --confirm
+Delete product
+wrs woo create-coupon --file coupons/promo.json
+Create coupon
+wrs woo list-orders --status processing --limit 20
+List orders
+wrs woo update-order --id 201 --status completed
+Update order status
+wrs woo refund-order --id 201 --amount 29.99
+Issue refund
+wrs woo set-gateway --gateway stripe --file gateways/stripe.json
+Configure payment gateway
+wrs woo set-shipping --file shipping/zones.json
+Configure shipping zones
+wrs woo set-tax --file tax/rates.json
+Configure tax rates
+wrs woo configure --file store.json
+Store general settings
+wrs woo report --type sales --period month
+Sales report
+Simple product fields
+name, description, short_description, regular_price, sale_price, sku, stock_quantity, categories (IDs), images (media IDs from wrs media upload)
+Variable product
+type: 'variable', attributes[{name, options[]}], variations[{attributes, regular_price, sku, stock_quantity}]
+Digital product
+virtual: true, downloadable: true, downloads[{name, file}]
+13. Custom Post Types & Taxonomies Module
+Define structured content types beyond pages/posts — Team Members, Testimonials, FAQs, Events, Portfolio, Services. Defined locally in YAML, registered on server by WRS.
+Command
+Description
+wrs cpt register --file cpt/team-member.yaml
+Register CPT + ACF field group (if ACF installed)
+wrs cpt list
+All WRS-managed CPTs with entry count
+wrs cpt create --type team_member --file entries/john.json
+Create entry with custom field data
+wrs cpt bulk-create --type team_member --file team.json
+Array of entries in one file
+wrs cpt update --type team_member --slug john --file john.json
+Update entry
+wrs cpt list-entries --type team_member --limit 50
+All entries with fields
+wrs cpt register-tax --file tax/skills.yaml
+Register custom taxonomy
+wrs cpt set-terms --type team_member --slug john --tax skills --terms 'PHP,React'
+Assign taxonomy terms
+CPT YAML fields
+slug, singular_name, plural_name, menu_icon (dashicons), has_archive, supports[], rest_api, fields[] (ACF field group), taxonomies[]
+ACF field types
+text, textarea, number, email, url, image, file, select, checkbox, radio, true_false, date_picker, color_picker, link, relationship, repeater (Pro)
+14. Cron & Scheduled Tasks Module
+Command
+Description
+wrs cron register --file cron/daily-report.yaml
+Register WP cron event + PHP callback hook
+wrs cron list
+All scheduled events, schedule, next run, last run, status
+wrs cron trigger --job daily_report
+Fire callback immediately for testing
+wrs cron disable --job daily_report
+Unschedule event
+wrs cron log --job daily_report --limit 20
+Last N executions: start_time, duration_ms, result, error
+wrs cron set-real-cron
+Output curl/wget command for BigRock cPanel Cron Jobs manager
+WP pseudo-cron fires only on page visits. For reliable scheduled tasks, set up a real server cron in BigRock cPanel. wrs cron set-real-cron outputs the exact command. Set frequency to every 5 minutes minimum.
+PART G
+Fault Tolerance, Observability & AI Safety
+15. The Fault Tolerance Problem
+The loop problem: AI pushes an operation → WordPress crashes mid-write → AI retries (assumes nothing was written) → creates duplicate partial state → retries again → now three partially-written records and a broken site. No record of what the AI did or in what order. This is not a theoretical risk — it is the default failure mode of any AI-driven system without fault tolerance built in.
+The five components of the fault tolerance layer address this problem systematically. They are not optional features — they are the foundation that makes AI-driven operation safe.
+Component 1 — Operation Journal
+Append-only log of every operation on both sides. Written before execution, not after.
+Component 2 — Server Telemetry
+Server reports actual outcome: what it wrote, PHP errors, DB rows affected, memory used, recovery hint.
+Component 3 — Checkpoint System
+Server-side snapshot of affected state before every write. The rollback target if the operation fails.
+Component 4 — AI Circuit Breaker
+CLI halts all AI write operations after N consecutive failures. Human must confirm before resuming.
+Component 5 — State Reconciliation
+Compare local journal view vs actual server state. Detect drift before the next operation.
+16. Operation Journal
+16.1 Overview
+Local journal
+~/.wrs/journal/<site-slug>/journal.ndjson — append-only NDJSON. Written with fsync before any HTTP request.
+Server journal
+wp-content/wrs/journal/journal.ndjson — written by plugin via file_put_contents with LOCK_EX before any DB write. Works even if WP is partially broken.
+Format
+Newline-delimited JSON. One entry per line. Never edited — only appended. Readable with any text editor or jq.
+Rotation
+Rotate at 10MB. Keep last 5 rotations. Same policy on both sides.
+Git
+NOT committed to project git repo. Lives in ~/.wrs/ (local) and wp-content/wrs/ (server).
+16.2 Journal Entry Schema
+op_id
+UUID v4 — unique identifier, same in local and server entries
+op_type
+page.build, page.update, db.migrate, members.create-tier, etc.
+status
+PENDING → IN_FLIGHT → SUCCESS / FAILED / PARTIAL / ROLLED_BACK
+timestamp_start
+ISO 8601 — when entry was first written (before execution)
+timestamp_end
+ISO 8601 — when operation completed (null if in-flight)
+payload_hash
+SHA256 of operation payload — detects identical retries
+payload_summary
+Human-readable: 'page.build slug=home title=Home 4.2KB HTML'
+checkpoint_id
+ID of the pre-operation checkpoint (null if no checkpoint)
+server_outcome
+Populated from telemetry: { php_errors, db_rows_affected, warnings, memory_used_mb }
+error_detail
+Full error message if FAILED or PARTIAL
+retry_of
+op_id of original operation if this is a retry — chains retries together
+operator
+'human' or 'ai'
+ai_session_id
+AI conversation/session ID if operator = 'ai'
+PARTIAL is the most dangerous status. It means the server started writing but did not finish. A blind retry adds more inconsistency on top of partial state. The system surfaces PARTIAL status prominently and blocks AI retries until human reviews.
+16.3 Journal Commands
+Command
+Description
+wrs journal list
+Last 20 journal entries with status indicators
+wrs journal list --status PARTIAL
+Filter by status — find all incomplete operations
+wrs journal list --operator ai
+Show only AI-initiated operations
+wrs journal show --op-id <uuid>
+Full detail of one operation including server outcome
+wrs journal pull
+Download server journal, merge with local — finds server entries missing from local
+wrs journal diff
+Compare local journal vs server journal — show divergences
+wrs journal tail
+Live-follow local journal — useful during AI sessions
+wrs journal export --format csv
+Export full journal for external analysis
+17. Server Telemetry Transport
+Every WRS API response includes a structured telemetry block. This is the server's actual account of what happened — beyond HTTP 200/500.
+op_id
+Matches the journal entry op_id
+status
+SUCCESS / FAILED / PARTIAL — the server's assessment
+db_rows_affected
+Rows actually written. 0 on a write operation = nothing was saved (silent failure).
+db_errors
+MySQL error strings, even non-fatal ones
+php_errors
+PHP errors and warnings captured via set_error_handler()
+php_memory_peak_mb
+Peak memory usage — helps detect near-OOM risk
+php_execution_ms
+Handler execution time — slow = timeout risk
+post_id
+WP post ID created or updated (for page/post operations)
+post_status_after
+post_status in DB after operation — detects silent drafts
+wrote_files
+File paths written — for CSS/upload operations
+content_echo
+First 64 bytes of post_content written — verified by CLI against sent HTML
+warnings
+Non-fatal warnings the server surfaces to the client
+recovery_hint
+SAFE_TO_RETRY / DO_NOT_RETRY / ROLLBACK_AVAILABLE / MANUAL_REVIEW_REQUIRED
+wp_version
+WordPress version — detects version changes between sessions
+server_timestamp
+Server time — detects clock drift affecting HMAC window
+The recovery_hint field is specifically designed for AI consumption. The AI reads this field to know what action is appropriate after a failure — not just HTTP status codes. SAFE_TO_RETRY = the failure was transient (timeout, lock contention), retry is fine. DO_NOT_RETRY = structural problem (invalid HTML, DB constraint), fix the cause first. The AI must follow this signal.
+17.1 Server Health Commands
+Command
+Returns
+wrs server health
+PHP version, WP version, plugin version, available memory, disk space, DB connectivity
+wrs server errors
+Last 50 PHP errors from server error log
+wrs server db-status
+DB connection, WRS table list, row counts
+wrs server file-check
+Verify files written by recent operations exist with correct checksums
+wrs server diff --op-id id
+Compare current server state vs what op_id was supposed to produce
+wrs server php-info
+Key php.ini values: memory_limit, max_execution_time, upload_max_filesize, disabled_functions
+18. Checkpoint System
+18.1 What Gets Checkpointed
+Operation Type
+What the Checkpoint Captures
+page.build / page.update
+Existing post row + all post meta for that slug + CSS file content
+db.migrate
+Table schema (SHOW CREATE TABLE) + row count + last 10 rows of affected tables
+members.create-tier
+Current pmpro_membership_levels table contents
+email.config-smtp
+Current WP Mail SMTP wp_options value
+forms.create
+Full CF7 post if form slug already exists
+woo.create-product
+Existing product row if SKU already exists
+Any file write
+SHA256 + content of any file being overwritten
+18.2 Checkpoint Storage
+Server
+wp-content/wrs/checkpoints/<op_id>.json — one file per checkpoint
+Local copy
+Downloaded to ~/.wrs/checkpoints/<site>/<op_id>.json — rollback works even if server is down
+Retention
+30 days or until explicitly cleared. Auto-pruned by age.
+Rollback note
+Checkpoints restore WRS-touched data. They cannot undo side effects: sent emails, payment charges, third-party plugin hooks.
+18.3 Rollback Commands
+Command
+Behaviour
+wrs rollback --op-id <uuid>
+Restore server to checkpoint taken before op_id
+wrs rollback --last
+Roll back the most recent checkpointed operation
+wrs rollback --last N
+Roll back last N operations in reverse order
+wrs rollback --dry-run --op-id <id>
+Show what would be restored — no changes made
+wrs checkpoint list
+All available checkpoints: age, op_type, status
+wrs checkpoint show --op-id <id>
+Full checkpoint data — what would be restored
+wrs checkpoint clear --older-than 7d
+Prune checkpoints older than 7 days
+19. AI Circuit Breaker
+The circuit breaker is enforced in the WRS CLI code — not as a suggestion to the AI. The AI cannot bypass it, override it, or reset it. Only a human can reset it.
+19.1 States
+CLOSED (normal)
+All AI operations proceed normally
+HALF-OPEN (warning)
+Approaching threshold. AI is warned in its context feed. Operations continue.
+OPEN (halted)
+Threshold exceeded. All AI write operations blocked. CLI returns structured error to AI. Human must intervene.
+19.2 Configuration
+consecutive_failure_threshold
+Failures before OPEN. Default: 3
+failure_window_minutes
+Only failures within this window count. Default: 10
+partial_counts_as_failure
+PARTIAL status counts as failure. Default: true
+human_pin_to_reset
+Human must type confirmation PIN to reset. Default: true
+block_reads_when_open
+Also block read operations when circuit OPEN. Default: false
+19.3 When Circuit Opens
+CLI detects N consecutive failures within window
+CLI writes CIRCUIT_OPEN event to local journal, notifies server journal
+CLI prints prominent red alert in terminal
+CLI returns structured error to AI: { circuit_breaker: 'OPEN', reason: '...', human_action_required: true }
+All AI write operations blocked — return immediately without executing
+Human runs wrs circuit-breaker status — sees full failure history and telemetry
+Human fixes the underlying issue
+Human runs wrs circuit-breaker reset — enters PIN, circuit returns to CLOSED
+19.4 Circuit Breaker Commands
+Command
+Description
+wrs circuit-breaker status
+State, consecutive failures, last failure detail, time since last success
+wrs circuit-breaker history
+Last 10 state changes with triggers
+wrs circuit-breaker reset
+Reset to CLOSED — requires PIN. Records reset in journal.
+wrs circuit-breaker test
+Run lightweight health check without writing anything — safe when OPEN
+wrs circuit-breaker disable
+Disable for session — requires --i-know-what-im-doing flag. Recorded in journal.
+20. State Reconciliation
+Over time, local journal's view of the server can drift from reality — due to partial writes, direct WP Admin edits, plugin updates, or server crashes. Reconciliation compares local vs server and categorises all differences.
+Scope
+Compared
+Command
+Pages
+Local HTML files vs post_content on server
+wrs reconcile pages
+Database
+Local schema files vs actual DB table structure
+wrs reconcile db
+Migrations
+Local migration files vs wp_wrs_migrations records
+wrs reconcile migrations
+Members
+Local tier YAML vs pmpro_membership_levels rows
+wrs reconcile members
+Forms
+Local form YAML vs CF7 posts on server
+wrs reconcile forms
+CPT
+Local CPT YAML vs registered_post_types on server
+wrs reconcile cpt
+Journal
+Local journal entries vs server journal
+wrs reconcile journal
+Full
+All of the above
+wrs reconcile --all
+MATCH
+Local and server agree — no action needed
+LOCAL_ONLY
+Exists locally, not on server — likely a failed push. Safe to retry.
+SERVER_ONLY
+Exists on server, not locally — may have been created via WP Admin. WRS can pull.
+DIVERGED
+Exists on both sides but content differs. Shows diff. Requires decision: push local over server, pull server to local, or mark as intentional.
+PARTIAL_WRITE
+Journal shows PARTIAL status for this item. Rollback available.
+Run wrs reconcile --all before every AI session. This ensures the AI's first operation is based on accurate server state. Resolve DIVERGED items before the session begins.
+21. AI Operation Modes
+Mode
+Behaviour
+When to Use
+SUPERVISED
+AI generates a plan (ordered list of WRS commands). Human reviews and approves before any execution. CLI executes only approved steps.
+High-risk: DB migrations, membership config, payment gateway, production deploys
+ASSISTED
+AI executes one operation at a time. After each, CLI shows telemetry and asks: 'Continue? [Y/n]'. Human can abort at any step. Default mode.
+General use: page builds, content updates, form creation, media uploads
+AUTONOMOUS
+AI executes a full sequence without step-by-step confirmation. Human notified of final result.
+Low-risk, well-tested sequences: bulk content updates, known-good deploys
+21.1 AI Context Feed
+The CLI passes a structured context object to the AI before each operation. The AI must treat this as authoritative over its own memory of previous operations:
+server_state
+PHP version, WP version, memory, disk, last deploy time
+recent_journal
+Last 5 journal entries — the AI knows what just happened
+circuit_breaker
+Current state and consecutive failure count
+last_telemetry
+Full telemetry from the most recent operation
+pending_partial
+Any PARTIAL operations from previous sessions not yet resolved
+active_warnings
+PHP errors or server warnings from recent operations
+site_inventory
+Current list of pages, posts, forms, tiers, CPTs
+config_summary
+Active modules, page mode, CSS mode
+PART H
+Deploy System & Recovery
+22. Deploy System
+22.1 Local Project Folder Structure
+The project folder (set in project_path) is separate from the GitHub repo. It holds your actual site content and has its own git repo.
+Folder / File
+Contents
+pages/
+HTML page files: home.html, about.html, services.html
+pages-css/
+Per-page CSS files (if css_mode = enqueue)
+partials/
+Reusable HTML snippets: nav.html, hero.html, footer.html, cta.html
+posts/
+Blog post HTML files
+cpt/
+CPT YAML definitions
+entries/
+CPT entry JSON files: entries/team/*.json, entries/faq/*.json
+forms/
+Form YAML files
+emails/
+Email HTML template files
+tiers/
+Membership tier YAML files
+products/
+WooCommerce product JSON files
+coupons/
+WooCommerce coupon JSON files
+gateways/
+Payment gateway config JSON
+migrations/
+SQL migration files: 001_create_members.sql
+seeds/
+DB seed JSON files
+media/
+Images/files to upload (gitignored — large files)
+media-map.json
+Auto-maintained: local filename → { wp_id, url }
+menus/
+Nav menu JSON files
+cron/
+Cron job YAML files
+wrs-manifest.json
+Auto-maintained SHA256 deploy manifest — gitignored
+.gitignore
+Ignores: media/, wrs-manifest.json
+22.2 Deploy Commands
+Command
+Behaviour
+wrs deploy --all
+Full ordered deploy per deploy_order in config
+wrs deploy --only pages
+Pages only — diff-aware, skips unchanged files
+wrs deploy --only migrations
+Pending DB migrations only
+wrs deploy --only media
+New/changed media only, updates media-map.json
+wrs deploy --file pages/home.html
+Single file deploy
+wrs deploy --dry-run
+Show what would change — no writes made
+wrs deploy --force
+Ignore manifest — redeploy everything
+wrs diff --slug home
+Text diff: local HTML vs live server HTML
+wrs pull --slug home
+Download live HTML to local file
+wrs pull --all-pages
+Download all WRS-managed pages (initial sync from existing site)
+wrs status
+Connection check, plugin version, module statuses, last deploy time
+23. Recovery Playbooks
+23.1 WordPress Crash Recovery
+Do NOT retry. Run: wrs circuit-breaker test — minimal health check that works even if WP is broken
+Run: wrs server errors — pull PHP error log to understand what crashed WP
+wrs journal list --limit 3 — find the op_id of the last operation
+If status is PARTIAL: wrs rollback --op-id <id> — restore checkpoint
+If server is completely down: wrs rollback --op-id <id> --use-local-checkpoint — generates SQL/file commands for manual restore via cPanel or phpMyAdmin
+After recovery: wrs reconcile --all — verify server state matches local journal
+wrs circuit-breaker reset
+wrs journal show --op-id <id> — review telemetry from the failing operation before retrying
+23.2 Plugin Reinstall After Server Wipe
+Local journal and checkpoints in ~/.wrs/ survive — they are on your machine
+python setup/wizard.py — regenerates plugin ZIP and config files
+Upload plugin ZIP to WordPress — the one browser step
+wrs setup deploy-config — redeploys plugin.config.json
+wrs server health — confirm plugin is running
+wrs reconcile --all — everything shows as LOCAL_ONLY (server was wiped)
+wrs deploy --force — pushes all local content to the clean server
+Your local project folder is the authoritative copy of your site. The WordPress server is the runtime. If the server disappears, redeploy from local. The journal tells you exactly what was on the server before it went down.
+23.3 Breaking the AI Retry Loop
+Circuit breaker will trigger OPEN after configured consecutive_failure_threshold
+wrs journal list --operator ai --status FAILED — see exactly what the AI was attempting
+wrs journal show --op-id <id> — check recovery_hint in server_outcome
+DO_NOT_RETRY: structural problem (invalid HTML, DB constraint, permission error). Fix root cause, do not retry.
+SAFE_TO_RETRY: transient failure (timeout, lock contention). Single manual retry is safe.
+wrs circuit-breaker reset — enter PIN to resume
+PART I
+GitHub Repository & Build Plan
+24. GitHub Repository Structure
+Path
+Type
+Purpose
+plugin/
+Directory
+WordPress plugin source — wizard ZIPs this for upload
+plugin/wp-remote-shell.php
+PHP
+Bootstrap: config load, REST route registration, master enable check
+plugin/includes/auth.php
+PHP
+HMAC auth gate — IP, token, HMAC, time-salt, rate limit
+plugin/includes/config-loader.php
+PHP
+Reads and validates plugin.config.json. get_config() helper.
+plugin/includes/router.php
+PHP
+Maps REST paths to module handlers. Dynamic by config.
+plugin/includes/journal.php
+PHP
+Append-only server journal. File-lock write. Works without full WP.
+plugin/includes/telemetry.php
+PHP
+Builds telemetry response object. PHP error capture, DB stats, memory.
+plugin/includes/checkpoint.php
+PHP
+Snapshot state. Store checkpoint. Apply rollback from checkpoint.
+plugin/modules/content.php
+PHP
+HTML/CSS inject, page/post CRUD, menu/widget management
+plugin/modules/media.php
+PHP
+Upload, list, delete, thumbnail regen
+plugin/modules/database.php
+PHP
+Query runner, migration system, option/meta helpers
+plugin/modules/members.php
+PHP
+PMPro API wrappers: tiers, users, access control
+plugin/modules/email.php
+PHP
+WP Mail SMTP config, template CRUD, send log
+plugin/modules/forms.php
+PHP
+CF7 API, submission storage, webhooks
+plugin/modules/woocommerce.php
+PHP
+WC REST API proxy, gateway/shipping config
+plugin/modules/cpt.php
+PHP
+CPT + taxonomy + ACF field group registration
+plugin/modules/cron.php
+PHP
+WP cron schedule/unschedule, execution log
+plugin/admin/settings-page.php
+PHP
+WP Admin: config status, module list, log viewer
+plugin/schema/install.sql
+SQL
+Creates all WRS custom tables on activation
+plugin/schema/uninstall.sql
+SQL
+Drops all WRS tables + options on uninstall — clean removal
+plugin/templates/wrs-canvas.php
+PHP
+Minimal canvas page template — full-width, no theme chrome
+cli/wrs.py
+Python
+Main CLI entry point (click-based). All commands route from here.
+cli/modules/
+Python
+page.py, post.py, media.py, db.py, members.py, email.py, forms.py, woo.py, cpt.py, cron.py, deploy.py, server.py, reconcile.py
+cli/lib/journal.py
+Python
+Local journal NDJSON read/write, status updates, export
+cli/lib/checkpoint.py
+Python
+Request checkpoint, download, local rollback
+cli/lib/circuit.py
+Python
+Circuit breaker state machine
+cli/lib/telemetry.py
+Python
+Parse server telemetry, detect silent failures, update journal
+cli/lib/reconcile.py
+Python
+Compare local vs server state across all modules
+cli/lib/ai_context.py
+Python
+Build AI context feed before each AI operation
+cli/lib/http.py
+Python
+HMAC-signed HTTP requests — all outbound traffic
+cli/lib/config.py
+Python
+Config loader, validation, multi-site support
+setup/wizard.py
+Python
+Interactive setup wizard — the install entry point
+setup/build-plugin.py
+Python
+Packages plugin/ into installable ZIP
+setup/build-config.py
+Python
+Non-interactive config generator (for CI/scripted setups)
+config/plugin.config.template.json
+JSON
+Server config template — placeholders only
+config/local.config.template.json
+JSON
+Local config template — placeholders only
+templates/
+HTML/CSS
+Starter page templates: landing-page, blog-post, login, register, dashboard, contact, product, shop, coming-soon
+docs/README.md
+Markdown
+Quick start and prerequisites
+docs/INSTALL.md
+Markdown
+Full installation guide
+docs/SECURITY.md
+Markdown
+Security model, token management, incident response
+docs/CLI-REFERENCE.md
+Markdown
+Every command documented with examples
+docs/AI-WORKFLOW.md
+Markdown
+How to use WRS with AI CLIs — operation modes, context feed, safe patterns, what to instruct the AI
+docs/FAULT-TOLERANCE.md
+Markdown
+Journal, checkpoints, circuit breaker, reconciliation — full reference
+docs/RECOVERY.md
+Markdown
+Step-by-step recovery for every failure scenario
+requirements.txt
+Text
+Python deps: requests, click, pyyaml, rich, bcrypt, python-dotenv
+.gitignore
+Config
+Ignores: config/local.config.json, .env, setup/output/, media/
+25. Third-Party Dependencies
+25.1 WordPress Plugins
+Module
+Plugin
+Cost
+Notes
+Members
+Paid Memberships Pro
+Free
+Required if Members module enabled
+Email
+WP Mail SMTP
+Free
+Required if Email module enabled
+Forms
+Contact Form 7
+Free
+Required if Forms module enabled
+WooCommerce
+WooCommerce
+Free
+Required if WooCommerce module enabled
+CPT fields
+Advanced Custom Fields
+Free
+Optional — enhances CPT with managed custom field groups
+Page build
+None
+—
+No page builder required. HTML/CSS injected directly.
+SEO
+Yoast or RankMath
+Free
+Optional — wrs page set-meta writes to their meta fields if active
+25.2 Python Dependencies (requirements.txt)
+requests
+HTTP client — all CLI-to-server communication
+click
+CLI argument parsing and command routing
+pyyaml
+Read YAML config files (tiers, forms, CPT, cron definitions)
+rich
+Terminal output: tables, colours, progress bars
+bcrypt
+Token hash verification during wrs config check
+python-dotenv
+Optional .env file support as alternative to local.config.json
+26. Build Phases
+Do not start Phase 4 until Phase 3 is complete and tested with deliberate failure scenarios. Every capability module built after Phase 3 inherits checkpointing, telemetry, and circuit breaker protection automatically — because they all flow through the same request/response pipeline. Skipping Phase 3 means all modules are unprotected.
+Phase
+Scope
+Key Deliverable
+Priority
+1
+Repo skeleton + wizard
+GitHub repo structure, config templates, wizard.py (full interactive), build-plugin.py
+FIRST — nothing else can be tested without this
+2
+Security + transport
+Plugin bootstrap, config loader, HMAC auth gate, ping endpoint, server journal (write side), telemetry shell
+SECOND — no endpoint is safe without this
+3
+Fault tolerance core
+Full journal (local + server), checkpoint create/read/rollback, circuit breaker, telemetry parser, silent failure detection, reconcile engine
+THIRD — gate before all feature modules
+4
+HTML/CSS content engine
+wrs page build/update/get/diff, canvas mode, CSS injection (inline + enqueue), AI generate, AI update
+First usable feature
+5
+Media module
+Upload, bulk upload, media-map.json, set-alt, regen
+Needed before pages can have images
+6
+Database module
+Query runner, migration system, seed, export, import, option/meta helpers
+Needed before members/forms/woo
+7
+Server health endpoints
+wrs server health/errors/db-status/php-info, reconcile engine
+Needed for safe AI operation
+8
+Deploy system
+wrs deploy (diff-aware), wrs pull, manifest, wrs reconcile --all
+9
+AI integration layer
+Operation modes (supervised/assisted/autonomous), plan review, AI context feed, docs/AI-WORKFLOW.md
+10
+CPT module
+CPT + taxonomy registration, ACF field group, entry CRUD
+11
+Members module
+PMPro wrappers, tier management, login/register page creation with HTML templates
+12
+Email module
+SMTP config, template system, hook assignment, send log
+13
+Forms module
+CF7 wrappers, submission storage, notifications, webhooks
+14
+WooCommerce module
+Product/order/coupon/gateway management via WC REST
+15
+Cron module
+Job registration, trigger, log, real-cron output
+16
+Multi-site + polish
+wrs use, wrs sites, admin dashboard, log viewer, wrs config check, token rotation
+PART J
+Pre-Build Confirmations & Next Steps
+27. Pre-Build Confirmations Needed
+#
+Item
+Why It Matters
+1
+BigRock plan type (Shared vs VPS)?
+Shared hosting often disables exec()/shell_exec(). This only affects shell execution in Phase 1. All HTML/CSS injection, DB, members, email, forms, and WooCommerce modules work on shared hosting — they use PHP/WP APIs only.
+2
+PHP version on BigRock?
+PMPro, WooCommerce, and CF7 require PHP 7.4+. PHP 8.0+ preferred. Check in BigRock cPanel > Software > PHP Version.
+3
+AI CLI tool — Claude CLI or other?
+Determines the ai_cli_command value in config and the input/output contract for wrs page generate. Claude CLI, any other AI tool that writes files to disk, or a custom script all work.
+4
+CSS mode preference?
+inline (simpler — CSS in <style> tag) or enqueue (CSS as a separate file, browser-cacheable, cleaner). Both are supported. Default: inline.
+5
+WooCommerce at launch or later?
+Disabled by default in config. No impact to add later. Confirm if needed at launch.
+6
+ACF Free or Pro?
+ACF Free handles basic custom fields in CPT module. ACF Pro adds Repeater fields (e.g. team member skill lists, pricing table rows). ~$49/yr. Optional.
+7
+GitHub repo visibility: public or private?
+Public = code visible, config gitignored (safe). Private = fully private. Recommendation: public repo, private config.
+8
+AI operation mode default?
+ASSISTED is the safest default (human confirms each step). AUTONOMOUS is faster for trusted workflows. SUPERVISED is for high-risk operations. Can be set per command.
+28. Next Steps — In Order
+Confirm the pre-build items in Section 27 — especially BigRock plan type (#1), PHP version (#2), and AI CLI tool (#3)
+Create the GitHub repository with the skeleton structure from Section 24 — placeholder files, README, .gitignore
+Phase 1 — Build wizard.py: Full interactive setup: prompts for URL, token generation, IP allowlist, module selection, config generation, plugin ZIP packaging. Test the complete wizard flow on a local WordPress installation before touching BigRock.
+Phase 2 — Build security foundation: Plugin bootstrap, config loader, HMAC auth gate, ping endpoint. Run wrs status and confirm the end-to-end handshake works.
+Phase 3 — Build fault tolerance core: Journal, telemetry, checkpoints, circuit breaker. This is the most important phase. Test failure scenarios deliberately: kill the server mid-operation, verify PARTIAL state is detected, verify rollback restores prior state, verify circuit breaker triggers correctly.
+Phase 4 — Build HTML/CSS content engine: wrs page build with telemetry. Test with simple HTML files first before involving the AI CLI.
+AI CLI integration test: Configure ai_cli_command, run wrs page generate with a simple prompt, verify the full generate → checkpoint → push → telemetry → journal flow completes correctly.
+Deliberate failure drill: Instruct the AI to push a page with invalid PHP in a shortcode. Observe the circuit breaker trigger. Verify journal records FAILED status with correct recovery_hint. Verify rollback restores the previous page. This test is the gate before building any further modules.
+Build remaining phases (5–16) in order — each is independently testable and inherits the full fault tolerance layer automatically
+Write docs/AI-WORKFLOW.md last: Document the complete workflow for operating WRS with your chosen AI CLI tool — how to structure prompts, how to pass media-map.json, how to interpret telemetry, operation mode guidance, what to do when the circuit breaker triggers. This will be the most-referenced document in daily use.
