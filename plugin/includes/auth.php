@@ -77,6 +77,19 @@ function wrs_verify_signature($token, WP_REST_Request $request) {
     return hash_equals($expected, $signature);
 }
 
+function wrs_ip_is_allowed($ip, $config) {
+    if (!empty($config['allow_all_ips'])) {
+        return true;
+    }
+
+    $allowed_ips = $config['allowed_ips'] ?? array();
+    if (in_array('*', $allowed_ips, true)) {
+        return true;
+    }
+
+    return in_array($ip, $allowed_ips, true);
+}
+
 function wrs_permissions_check(WP_REST_Request $request) {
     $config = wrs_get_config();
     if (is_wp_error($config)) {
@@ -92,8 +105,7 @@ function wrs_permissions_check(WP_REST_Request $request) {
     }
 
     $ip = wrs_client_ip();
-    $allowed_ips = $config['allowed_ips'] ?? array();
-    if (!in_array($ip, $allowed_ips, true)) {
+    if (!wrs_ip_is_allowed($ip, $config)) {
         return new WP_Error('wrs_ip_denied', 'IP address is not allowlisted.', array('status' => 403));
     }
 

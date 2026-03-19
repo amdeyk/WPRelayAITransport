@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from cli.lib.config import ensure_project_structure, get_active_site, load_local_config, site_name_from_url
+from cli.lib.config import ensure_project_structure, get_active_site, load_local_config, load_plugin_config, site_name_from_url
 from setup.build_config import (
     build_site_configs,
     rotate_site_token,
@@ -53,7 +53,10 @@ def interactive_new_site() -> None:
     site_name = site_name_from_url(site_url)
     project_default = str((Path.home() / "wrs-sites" / site_name).resolve())
     project_path = Prompt.ask("Local project path", default=project_default).strip()
-    allowed_ips = Prompt.ask("Allowlisted IPs (comma separated)", default="127.0.0.1").split(",")
+    allow_all_ips = Confirm.ask("Allow all IPs during initial setup?", default=True)
+    allowed_ips = []
+    if not allow_all_ips:
+        allowed_ips = Prompt.ask("Allowlisted IPs (comma separated)", default="127.0.0.1").split(",")
     token = Prompt.ask("Secret token (leave blank to auto-generate)", default="", show_default=False).strip() or None
     page_mode = Prompt.ask("Page mode", choices=["html", "elementor"], default="html")
     css_mode = Prompt.ask("CSS mode", choices=["inline", "enqueue"], default="inline")
@@ -66,6 +69,7 @@ def interactive_new_site() -> None:
         site_url=site_url,
         project_path=project_path,
         allowed_ips=[item.strip() for item in allowed_ips if item.strip()],
+        allow_all_ips=allow_all_ips,
         token=token,
         page_mode=page_mode,
         css_mode=css_mode,
@@ -94,11 +98,22 @@ def rotate_token_flow(site_name: str) -> None:
 
 def update_ips_flow(site_name: str) -> None:
     current = load_local_config(site_name)
-    allowed_ips = Prompt.ask(
-        "Allowlisted IPs (comma separated)",
-        default="127.0.0.1",
-    ).split(",")
-    _, plugin_config = update_site_ips(site_name, [item.strip() for item in allowed_ips if item.strip()])
+    plugin_current = load_plugin_config(site_name)
+    allow_all_ips = Confirm.ask(
+        "Allow all IPs during setup?",
+        default=plugin_current.get("allow_all_ips", False),
+    )
+    allowed_ips = []
+    if not allow_all_ips:
+        allowed_ips = Prompt.ask(
+            "Allowlisted IPs (comma separated)",
+            default=",".join(plugin_current.get("allowed_ips", ["127.0.0.1"])) or "127.0.0.1",
+        ).split(",")
+    _, plugin_config = update_site_ips(
+        site_name,
+        [item.strip() for item in allowed_ips if item.strip()],
+        allow_all_ips=allow_all_ips,
+    )
     paths = write_site_artifacts(site_name, current, plugin_config)
     console.print(f"[green]Allowlist updated[/green] for {site_name}")
     console.print(f"Plugin ZIP: {paths['zip_path']}")

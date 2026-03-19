@@ -280,6 +280,10 @@ In WordPress Admin:
 7. Click `Install Now`.
 8. After WordPress finishes uploading and installing it, click `Activate Plugin`.
 
+After activation, you should see a top-level `WP Remote Shell` menu in the left admin sidebar. The plugin row in `Plugins` also gets a `Settings` link that opens the same page.
+
+The admin page is an editable settings screen, not a raw JSON viewer. New builds default to `Allow all IPs during setup` so the first connection works for novice users, and the allowlist can be tightened later from inside WordPress.
+
 Important:
 
 - upload the `.zip` file itself, not the whole `setup/output/<site>/` folder

@@ -17,6 +17,10 @@
 4. Open `setup/output/<site>/wp-config-line.txt`
 5. Copy its single `define('WRS_CONFIG_PATH', ...)` line into `wp-config.php`
 
+After activation, WordPress should show a top-level `WP Remote Shell` item in the left admin sidebar. The Plugins screen also includes a `Settings` link for the plugin.
+
+The first-run default is `Allow all IPs during setup` so a beginner can connect without already knowing their public IP. After the connection works, narrow the allowlist from the WordPress settings screen.
+
 Upload only the `.zip` file. Do not upload the whole folder and do not upload `plugin.config.json`.
 
 ## Verify

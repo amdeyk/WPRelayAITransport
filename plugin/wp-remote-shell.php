@@ -31,6 +31,7 @@ register_activation_hook(__FILE__, 'wrs_activate_plugin');
 
 add_action('rest_api_init', 'wrs_register_routes');
 add_action('admin_menu', 'wrs_register_settings_page');
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), 'wrs_plugin_action_links');
 
 add_action('wp_head', function () {
     if (!is_singular('page')) {

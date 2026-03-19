@@ -16,7 +16,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate WRS config files.")
     parser.add_argument("--site-url", required=True)
     parser.add_argument("--project-path", required=True)
-    parser.add_argument("--allowed-ip", action="append", dest="allowed_ips", required=True)
+    parser.add_argument("--allowed-ip", action="append", dest="allowed_ips", default=[])
+    parser.add_argument("--restrict-ips", action="store_true", help="Use the provided allowlist instead of allowing all IPs during setup.")
     parser.add_argument("--token", default=None)
     args = parser.parse_args()
 
@@ -24,6 +25,7 @@ def main() -> None:
         site_url=args.site_url,
         project_path=args.project_path,
         allowed_ips=args.allowed_ips,
+        allow_all_ips=not args.restrict_ips,
         token=args.token,
     )
     paths = write_site_artifacts(site_name, local_config, plugin_config)

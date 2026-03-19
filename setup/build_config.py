@@ -54,7 +54,8 @@ def hash_token(token: str) -> str:
 def build_site_configs(
     site_url: str,
     project_path: str,
-    allowed_ips: list[str],
+    allowed_ips: list[str] | None = None,
+    allow_all_ips: bool = True,
     token: str | None = None,
     page_mode: str = "html",
     css_mode: str = "inline",
@@ -101,7 +102,8 @@ def build_site_configs(
         "site_name": site_name,
         "site_url": site_url,
         "token_hash": token_hash,
-        "allowed_ips": allowed_ips,
+        "allow_all_ips": allow_all_ips,
+        "allowed_ips": allowed_ips or [],
         "require_https": True,
         "replay_window_seconds": 30,
         "rate_limit_per_minute": 20,
@@ -157,10 +159,12 @@ def rotate_site_token(site_name: str) -> tuple[dict, dict, str]:
     return local_config, plugin_config, token
 
 
-def update_site_ips(site_name: str, allowed_ips: list[str]) -> tuple[dict, dict]:
+def update_site_ips(site_name: str, allowed_ips: list[str], allow_all_ips: bool | None = None) -> tuple[dict, dict]:
     local_config = load_local_config(site_name)
     plugin_config = load_plugin_config(site_name)
     plugin_config["allowed_ips"] = allowed_ips
+    if allow_all_ips is not None:
+        plugin_config["allow_all_ips"] = allow_all_ips
     save_plugin_config(site_name, plugin_config)
     return local_config, plugin_config
 
@@ -181,7 +185,8 @@ def upgrade_site_config(site_name: str) -> tuple[dict, dict]:
     _, fresh_local, fresh_plugin = build_site_configs(
         site_url=local_config["site_url"],
         project_path=local_config["project_path"],
-        allowed_ips=plugin_config.get("allowed_ips", ["127.0.0.1"]),
+        allowed_ips=plugin_config.get("allowed_ips", []),
+        allow_all_ips=plugin_config.get("allow_all_ips", False),
         token=local_config["token"],
         page_mode=local_config.get("page_mode", "html"),
         css_mode=local_config.get("css_mode", "inline"),

@@ -2,8 +2,8 @@
   "site_name": "example.com",
   "site_url": "https://example.com",
   "token_hash": "REPLACE_ME",
+  "allow_all_ips": true,
   "allowed_ips": [
-    "127.0.0.1"
   ],
   "require_https": true,
   "replay_window_seconds": 30,
@@ -36,4 +36,3 @@
   },
   "log_retention_count": 500
 }
-

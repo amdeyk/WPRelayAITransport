@@ -24,6 +24,6 @@ def check(site_name: str | None) -> None:
     table.add_row("page_mode", "ok" if local_config.get("page_mode") == plugin_config.get("page_mode") else "mismatch")
     table.add_row("css_mode", "ok" if local_config.get("css_mode") == plugin_config.get("css_mode") else "mismatch")
     table.add_row("token_hash_present", "yes" if plugin_config.get("token_hash") else "no")
+    table.add_row("allow_all_ips", "yes" if plugin_config.get("allow_all_ips") else "no")
     table.add_row("allowed_ips", ", ".join(plugin_config.get("allowed_ips", [])))
     console.print(table)
-

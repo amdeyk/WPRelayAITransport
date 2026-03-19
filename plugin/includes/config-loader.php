@@ -4,6 +4,62 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+function wrs_config_defaults() {
+    return array(
+        'site_name' => '',
+        'site_url' => '',
+        'token_hash' => '',
+        'allow_all_ips' => false,
+        'allowed_ips' => array(),
+        'require_https' => true,
+        'replay_window_seconds' => 30,
+        'rate_limit_per_minute' => 20,
+        'max_output_bytes' => 524288,
+        'exec_timeout_seconds' => 30,
+        'page_mode' => 'html',
+        'css_mode' => 'inline',
+        'modules' => array(
+            'master_enabled' => true,
+            'content' => true,
+            'media' => true,
+            'database' => true,
+            'members' => false,
+            'email' => false,
+            'forms' => false,
+            'woocommerce' => false,
+            'cpt' => false,
+            'cron' => false,
+        ),
+        'telemetry' => array(
+            'capture_php_errors' => true,
+            'capture_memory' => true,
+        ),
+        'checkpoint' => array(
+            'enabled' => true,
+        ),
+        'journal' => array(
+            'enabled' => true,
+        ),
+        'log_retention_count' => 500,
+    );
+}
+
+function wrs_merge_config_values($defaults, $value) {
+    if (!is_array($defaults) || !is_array($value)) {
+        return $value;
+    }
+
+    $merged = $defaults;
+    foreach ($value as $key => $child) {
+        if (array_key_exists($key, $defaults)) {
+            $merged[$key] = wrs_merge_config_values($defaults[$key], $child);
+        } else {
+            $merged[$key] = $child;
+        }
+    }
+    return $merged;
+}
+
 function wrs_default_config_path() {
     $uploads = wp_get_upload_dir();
     return trailingslashit($uploads['basedir']) . 'wrs/plugin.config.json';
@@ -61,7 +117,7 @@ function wrs_get_config() {
         return new WP_Error('wrs_config_invalid', 'WRS config file is invalid JSON.', array('status' => 500));
     }
 
-    $config = $decoded;
+    $config = wrs_merge_config_values(wrs_config_defaults(), $decoded);
     return $config;
 }
 
