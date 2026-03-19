@@ -2,9 +2,9 @@
 
 WP Remote Shell (WRS) is a CLI-first WordPress operations system.
 
-It lets you build and update WordPress pages from local files, then push those changes through a signed API bridge instead of using WordPress Admin for day-to-day editing.
+It lets you build and update WordPress pages from local files and push those changes through a signed API bridge instead of using the WordPress Admin for day-to-day editing.
 
-Today, this repository is strongest in one complete vertical slice:
+Today this repository is strongest in one complete vertical slice:
 
 - setup and packaging
 - authenticated transport
@@ -12,6 +12,8 @@ Today, this repository is strongest in one complete vertical slice:
 - rollback support
 - page build / update / publish workflows
 - AI-assisted page generation and update
+- CLI pairing (connect a new machine without running the full wizard)
+- disconnect and server-side token revocation
 
 The larger product vision includes many more modules, but this repo currently centers on safe WordPress page operations.
 
@@ -31,11 +33,10 @@ Local files -> WRS CLI -> Signed request -> WRS plugin -> WordPress runtime
 
 That means:
 
-- your HTML/CSS lives locally
-- your changes can be versioned in git
-- each write operation is tracked
-- a checkpoint is created before changes
-- rollback is available if a write goes wrong
+- your HTML/CSS lives locally and can be versioned in git
+- each write operation is journaled before it happens
+- a checkpoint is created before every change
+- rollback is a single command if something goes wrong
 - an AI CLI can operate through the same commands instead of inventing its own flow
 
 ## Architecture
@@ -90,11 +91,12 @@ That means:
 
 ## Current Scope
 
-Implemented now:
+Implemented and working now:
 
 - setup wizard and config generation
 - plugin ZIP packaging
 - per-site local and server config handling
+- CLI pairing code — connect a new machine without re-running the wizard
 - authenticated transport with:
   - HTTPS enforcement
   - IP allowlist
@@ -120,8 +122,8 @@ Implemented now:
   - set-image
   - set-meta
   - delete
-  - generate
-  - ai-update
+  - generate (AI)
+  - ai-update (AI)
 - server diagnostics:
   - health
   - errors
@@ -131,11 +133,12 @@ Implemented now:
 - page-only deploy flow
 - pull and pull-all-pages
 - page reconciliation
+- disconnect with optional server-side token revocation
 
 Not fully implemented yet:
 
 - media module
-- database/migrations module
+- database / migrations module
 - members / PMPro module
 - email module
 - forms / CF7 module
@@ -154,15 +157,16 @@ Not fully implemented yet:
 |-- cli/
 |   |-- wrs.py                   main CLI entrypoint
 |   |-- lib/                     config, HTTP, journal, checkpoint, circuit logic
-|   `-- modules/                 page, server, setup, rollback, reconcile, etc.
+|   `-- modules/                 page, server, setup, connect, rollback, reconcile, etc.
 |-- plugin/
 |   |-- wp-remote-shell.php      plugin bootstrap
 |   |-- includes/                auth, router, telemetry, checkpoint helpers
 |   |-- modules/                 WordPress capability modules
+|   |-- admin/                   WordPress admin settings page
 |   |-- schema/                  SQL install/uninstall definitions
 |   `-- templates/               canvas template
 |-- setup/
-|   |-- wizard.py                interactive setup + maintenance
+|   |-- wizard.py                interactive setup + maintenance wizard
 |   |-- build_config.py          config creation helpers
 |   `-- build_plugin.py          plugin ZIP packaging
 |-- config/
@@ -173,8 +177,6 @@ Not fully implemented yet:
 ```
 
 ## The Main Idea
-
-Think of WRS like this:
 
 ```text
 You do not "edit WordPress directly".
@@ -189,7 +191,9 @@ You:
 
 That is the mental model both humans and AI agents should use.
 
-## First-Time Installation For A Beginner
+---
+
+## First-Time Installation
 
 This section assumes:
 
@@ -199,8 +203,6 @@ This section assumes:
 - you can edit `wp-config.php` on the server once
 
 ### Step 1: Get the repository
-
-If you already have the repo locally, skip this.
 
 ```bash
 git clone <your-repo-url>
@@ -213,138 +215,68 @@ cd wp-remote-shell
 pip install -r requirements.txt
 ```
 
-If `pip` is not found, try:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
 ### Step 3: Run the setup wizard
 
 ```bash
 python setup/wizard.py
 ```
 
-The wizard will ask for:
+The wizard runs through **8 numbered steps** and explains each choice before asking for it:
 
-- your WordPress site URL
-- local project path
-- allowlisted IPs
-- token generation
-- page mode
-- CSS mode
-- default status
-- AI CLI command
-- circuit-breaker reset PIN
-- which modules to enable
+| Step | What it sets up |
+|------|-----------------|
+| 1 — Site URL | Validates and normalises your WordPress URL, derives the site folder name |
+| 2 — Project | Local folder where your HTML, CSS, and content files will live |
+| 3 — Access | IP allowlist — start open, lock it down later |
+| 4 — Authentication | Auto-generates a 64-char hex token or accepts a manual one (16+ chars) |
+| 5 — Safety | Circuit-breaker reset PIN (digits only, 6+ chars, confirmed twice) |
+| 6 — Content Defaults | Page mode (html/elementor), CSS mode (inline/enqueue), default status |
+| 7 — AI | Optional AI CLI command for `page generate` and `page ai-update` |
+| 8 — Modules | Which modules to enable — only `content` is fully implemented |
+
+A review table is shown before any files are written. Press Enter to accept the default shown in brackets at each prompt.
 
 ### Step 4: What the wizard creates
 
-After the wizard runs, WRS creates:
-
 ```text
 ~/.wrs/sites/<site>/local.config.json      local plaintext config
-~/.wrs/sites/<site>/plugin.config.json     server config payload
-setup/output/<site>/wp-remote-shell.zip    plugin ZIP to upload
-setup/output/<site>/wp-config-line.txt     line to paste into wp-config.php
-<project_path>/pages/                      your local page HTML files
-<project_path>/pages-css/                  your local CSS files
+~/.wrs/sites/<site>/plugin.config.json     server config reference copy
+setup/output/<site>/wp-remote-shell.zip    plugin ZIP to upload to WordPress
+setup/output/<site>/wp-config-line.txt     one line to add to wp-config.php
+<project_path>/pages/                      local page HTML files go here
+<project_path>/pages-css/                  local page CSS files go here
 ```
 
-`<site>` is the site folder name that WRS derives from your WordPress URL.
-
-Example:
-
-- if your site URL is `https://example.com`, the output folder is `setup/output/example.com/`
-- if your site URL is `https://clientsite.com`, the output folder is `setup/output/clientsite.com/`
-
-Before you continue, open that folder and confirm that these two files exist:
-
-- `wp-remote-shell.zip`
-- `wp-config-line.txt`
-
-If you do not see them, the wizard did not finish successfully. Run `python setup/wizard.py` again and note the site URL you enter, because that determines the `<site>` folder name.
+`<site>` is derived from your WordPress URL. `https://example.com` becomes `example.com`.
 
 ### Step 5: Upload the plugin in WordPress
 
-This is one of the very few browser steps.
+1. Log in to WordPress Admin.
+2. Go to **Plugins → Add New Plugin → Upload Plugin**.
+3. Choose `setup/output/<site>/wp-remote-shell.zip`.
+4. Click **Install Now**, then **Activate Plugin**.
 
-In WordPress Admin:
+After activation a **WP Remote Shell** menu appears in the left admin sidebar.
 
-1. Log in to your WordPress Admin dashboard.
-2. Go to `Plugins`.
-3. Click `Add New Plugin` or `Add New`.
-4. Click `Upload Plugin` near the top of the page.
-5. Click `Choose File`.
-6. Select `setup/output/<site>/wp-remote-shell.zip` from your local project folder.
-7. Click `Install Now`.
-8. After WordPress finishes uploading and installing it, click `Activate Plugin`.
+Upload the `.zip` itself — do not unzip it first. `plugin.config.json` is not the file you upload in this step.
 
-After activation, you should see a top-level `WP Remote Shell` menu in the left admin sidebar. The plugin row in `Plugins` also gets a `Settings` link that opens the same page.
+### Step 6: Add the config path to `wp-config.php`
 
-The admin page is an editable settings screen, not a raw JSON viewer. New builds default to `Allow all IPs during setup` so the first connection works for novice users, and the allowlist can be tightened later from inside WordPress.
-
-Important:
-
-- upload the `.zip` file itself, not the whole `setup/output/<site>/` folder
-- do not unzip the file manually before uploading
-- `plugin.config.json` is not the file you upload in WordPress
-
-Example on this repo:
-
-```text
-setup/output/example.com/wp-remote-shell.zip
-```
-
-### Step 6: Add the WRS config path to `wp-config.php`
-
-Open the generated file:
-
-```text
-setup/output/<site>/wp-config-line.txt
-```
-
-It contains a line like:
+Open `setup/output/<site>/wp-config-line.txt`. It contains one line:
 
 ```php
 define('WRS_CONFIG_PATH', dirname(__FILE__) . '/wp-content/uploads/wrs/plugin.config.json');
 ```
 
-Copy that one line and add it to your site's `wp-config.php` file.
-
-Good place to put it:
-
-- above the line that says `/* That's all, stop editing! Happy publishing. */`
-
-This tells the plugin where to load its secure runtime configuration from.
-
-Important:
-
-- paste the contents of `wp-config-line.txt` into `wp-config.php`
-- do not paste the filename itself
-- do not edit `plugin.config.json` by hand
+Paste that line into `wp-config.php` above the `/* That's all, stop editing! */` comment.
 
 ### Step 7: Deploy the server config
-
-Back in your terminal:
 
 ```bash
 python cli/wrs.py setup deploy-config
 ```
 
-This sends the generated `plugin.config.json` to the WordPress server through the authenticated WRS channel.
-
-If this is your first time setting up a site, the order is:
-
-1. run the wizard
-2. upload and activate the plugin in WordPress
-3. add the generated `WRS_CONFIG_PATH` line to `wp-config.php`
-4. run `python cli/wrs.py setup deploy-config`
-5. run the verification commands below
-
-### Step 8: Verify everything works
-
-Run:
+### Step 8: Verify the connection
 
 ```bash
 python cli/wrs.py status
@@ -352,25 +284,84 @@ python cli/wrs.py config check
 python cli/wrs.py server health
 ```
 
-If these succeed, the local CLI and the WordPress plugin can talk to each other.
+If all three succeed, the CLI and plugin are talking to each other.
 
-## The Safe Operating Pattern
+---
 
-Use this pattern every time:
+## Connecting From A New Machine (Pairing)
 
-```text
-1. Check status
-2. Check config
-3. Check circuit breaker
-4. Reconcile
-5. Read live state if needed
-6. Edit local files
-7. Push the smallest valid change
-8. Read telemetry
-9. Roll back if necessary
+If you need to connect a different computer to a WordPress site that is already running WRS — without re-running the full wizard — use the pairing code flow.
+
+### In WordPress Admin
+
+1. Go to **WP Remote Shell** in the admin sidebar.
+2. Find the **CLI Pairing Code** card.
+3. Click **Generate CLI Pairing Code**.
+4. The card shows a hex code and the exact command to run. Copy the command.
+
+The code expires in **30 minutes** and works **only once**. Generating a new code invalidates any previous one.
+
+### In your terminal
+
+Paste the command shown in WordPress:
+
+```bash
+python cli/wrs.py pair <hex-code>
 ```
 
-The matching commands:
+The wizard asks for two things the server cannot know — your local project path and a circuit-breaker PIN — then writes the local config automatically.
+
+Confirm the connection:
+
+```bash
+python cli/wrs.py status
+```
+
+### How pairing works (for reference)
+
+```text
+WordPress admin generates a one-time nonce
+  -> stores it server-side for 30 minutes
+  -> encodes {site_url, nonce} as a hex string
+
+CLI decodes the hex string
+  -> POSTs the nonce to /wp-json/wrs/v1/connect/pair (no HMAC needed)
+
+Plugin validates the nonce, deletes it (single-use)
+  -> generates a fresh 64-char token
+  -> stores its bcrypt hash in plugin.config.json
+  -> returns the plaintext token to the CLI
+
+CLI saves the token in ~/.wrs/sites/<site>/local.config.json
+  -> sets as active site
+```
+
+---
+
+## Disconnecting
+
+### Remove local credentials only
+
+```bash
+python cli/wrs.py disconnect
+python cli/wrs.py disconnect --site example.com
+```
+
+This deletes `~/.wrs/sites/<site>/` and updates the active-site pointer. The server token remains valid (useful if you want to re-pair on this machine later with `pair`).
+
+### Revoke the server token too
+
+```bash
+python cli/wrs.py disconnect --revoke
+```
+
+This makes an authenticated request to clear the token hash and disable the plugin API server-side before removing local files. Use this when decommissioning a site or handing it off.
+
+---
+
+## Safe Operating Pattern
+
+Use this order every time:
 
 ```bash
 python cli/wrs.py status
@@ -379,9 +370,19 @@ python cli/wrs.py circuit-breaker status
 python cli/wrs.py reconcile --all
 ```
 
-## Your Local Project Folder
+Then:
 
-WRS creates and expects a site project folder like this:
+```text
+1. read live state if needed
+2. edit local files
+3. push the smallest valid change
+4. inspect telemetry and journal
+5. roll back if necessary
+```
+
+---
+
+## Local Project Folder
 
 ```text
 <project_path>/
@@ -400,61 +401,34 @@ WRS creates and expects a site project folder like this:
 `-- wrs-manifest.json
 ```
 
-For the current implementation, `pages/` and `pages-css/` are the most important directories.
+For the current implementation `pages/` and `pages-css/` are the most important directories.
 
-## How To Create And Publish A Page
+---
 
-### Create local files
-
-Example:
-
-```text
-pages/home.html
-pages-css/home.css
-```
-
-### Build the page into WordPress
-
-```bash
-python cli/wrs.py page build --file pages/home.html --css pages-css/home.css --slug home --title "Home"
-```
-
-What happens internally:
-
-```text
-local files
-   -> local journal PENDING
-   -> server checkpoint created
-   -> signed POST to plugin
-   -> WordPress page created or updated
-   -> telemetry returned
-   -> local journal updated
-   -> circuit breaker evaluated
-```
-
-### Publish the page
-
-If you built it as draft, publish it with:
-
-```bash
-python cli/wrs.py page publish --slug home
-```
-
-Or build and publish in one step:
-
-```bash
-python cli/wrs.py page build --file pages/home.html --css pages-css/home.css --slug home --title "Home" --publish
-```
-
-## Common Page Commands
+## Page Commands
 
 ### Create a page
 
 ```bash
-python cli/wrs.py page build --file pages/home.html --css pages-css/home.css --slug home --title "Home"
+python cli/wrs.py page build \
+  --file pages/home.html \
+  --css pages-css/home.css \
+  --slug home \
+  --title "Home"
 ```
 
-### Update HTML/CSS
+### Create and publish immediately
+
+```bash
+python cli/wrs.py page build \
+  --file pages/home.html \
+  --css pages-css/home.css \
+  --slug home \
+  --title "Home" \
+  --publish
+```
+
+### Update HTML and CSS
 
 ```bash
 python cli/wrs.py page update --file pages/home.html --css pages-css/home.css --slug home
@@ -485,6 +459,12 @@ python cli/wrs.py page diff --slug home --file pages/home.html
 python cli/wrs.py page list
 ```
 
+### Publish a draft
+
+```bash
+python cli/wrs.py page publish --slug home
+```
+
 ### Clone a page
 
 ```bash
@@ -509,110 +489,59 @@ python cli/wrs.py page set-meta --slug home --title "SEO Title" --description "S
 python cli/wrs.py page delete --slug home
 ```
 
-## How AI Should Control WRS
+---
 
-An AI CLI should not operate WordPress by improvising browser-style behavior.
+## AI-Assisted Page Operations
 
-It should use this control loop:
+WRS can call a local AI CLI command configured as `ai_cli_command` in `local.config.json`.
 
-```text
-AI reads repo + AGENTS.md + AI CLI playbook
-   -> runs preflight checks
-   -> inspects live page state when necessary
-   -> edits local files
-   -> runs one WRS command
-   -> reads telemetry and journal output
-   -> either continues, stops, or rolls back
-```
+The AI command should:
+- read a prompt from stdin
+- return either raw HTML or JSON with `html` and `css` keys
 
-### AI preflight commands
+Set the command during the wizard (step 7) or leave it blank and set it later.
 
-```bash
-python cli/wrs.py status
-python cli/wrs.py config check
-python cli/wrs.py circuit-breaker status
-python cli/wrs.py reconcile --all
-```
-
-### AI write rule
-
-For existing pages:
-
-1. inspect live page
-2. compare local file
-3. edit local file
-4. run `page update`
-5. inspect telemetry
-
-### AI publish rule
-
-Do not publish by default unless the user explicitly asked for publish.
-
-Safer default:
-
-```bash
-python cli/wrs.py page build --file pages/home.html --css pages-css/home.css --slug home --title "Home"
-```
-
-Then publish only when asked:
-
-```bash
-python cli/wrs.py page publish --slug home
-```
-
-### AI rollback rule
-
-If a write fails:
-
-- do not loop retries blindly
-- inspect journal
-- inspect checkpoints
-- inspect `recovery_hint`
-- use rollback if needed
-
-Commands:
-
-```bash
-python cli/wrs.py journal list
-python cli/wrs.py checkpoint list
-python cli/wrs.py rollback --last --dry-run
-python cli/wrs.py rollback --last
-```
-
-## AI-Assisted Page Generation
-
-WRS can call a local AI command defined in `local.config.json` as `ai_cli_command`.
-
-Expected AI command behavior:
-
-- accept a prompt from stdin
-- return either:
-  - raw HTML
-  - or JSON with `html` and `css`
-
-### Generate a new page
+### Generate a new page from a prompt
 
 ```bash
 python cli/wrs.py page generate --slug landing --prompt "Landing page for a fitness app"
 ```
 
-### Generate but stop before deployment
+### Generate and review locally before deploying
 
 ```bash
 python cli/wrs.py page generate --slug landing --prompt "Landing page for a fitness app" --review
 ```
 
-### AI update an existing page
+### AI-update an existing page
 
 ```bash
 python cli/wrs.py page ai-update --slug landing --instruction "Add a testimonials section and improve the CTA"
 ```
 
-In review mode, WRS writes generated output to local files so a human or AI can inspect them before deployment.
+In `--review` mode WRS writes generated files locally so a human or AI can inspect them before any deployment happens.
+
+---
+
+## Multi-Site
+
+### List configured sites
+
+```bash
+python cli/wrs.py sites
+```
+
+### Switch active site
+
+```bash
+python cli/wrs.py use example.com
+```
+
+All commands use the active site by default. Pass `--site <name>` to override.
+
+---
 
 ## Deploy Flow
-
-Current deploy support is page-focused.
 
 ### Deploy all changed pages
 
@@ -632,13 +561,13 @@ python cli/wrs.py deploy --dry-run
 python cli/wrs.py deploy --file pages/home.html
 ```
 
-## Rollback, Checkpoints, And Journals
+---
+
+## Rollback, Checkpoints, and Journals
 
 These three features are the safety core of WRS.
 
 ### Journal
-
-The local journal tracks operations and outcomes.
 
 ```bash
 python cli/wrs.py journal list
@@ -649,7 +578,7 @@ python cli/wrs.py journal export --output journal.json
 
 ### Checkpoints
 
-Before page writes, WRS can create a checkpoint.
+WRS creates a checkpoint before every write operation.
 
 ```bash
 python cli/wrs.py checkpoint list
@@ -659,8 +588,6 @@ python cli/wrs.py checkpoint clear
 
 ### Rollback
 
-Rollback restores the state captured by a checkpoint.
-
 ```bash
 python cli/wrs.py rollback --last --dry-run
 python cli/wrs.py rollback --last
@@ -668,17 +595,17 @@ python cli/wrs.py rollback --op-id <id>
 python cli/wrs.py rollback --checkpoint-id <id>
 ```
 
+---
+
 ## Circuit Breaker
 
-The circuit breaker exists to stop bad write loops.
+The circuit breaker stops bad write loops automatically.
 
-States:
-
-- `CLOSED` = normal
-- `HALF-OPEN` = warning
-- `OPEN` = writes should stop until the issue is understood
-
-Commands:
+| State | Meaning |
+|-------|---------|
+| `CLOSED` | Normal — writes are allowed |
+| `HALF-OPEN` | Warning threshold reached |
+| `OPEN` | Writes blocked until root cause is fixed and breaker is reset |
 
 ```bash
 python cli/wrs.py circuit-breaker status
@@ -687,17 +614,11 @@ python cli/wrs.py circuit-breaker test
 python cli/wrs.py circuit-breaker reset
 ```
 
-If the breaker is open:
+If the breaker is open: inspect failures → fix root cause → then reset. Do not retry writes blindly.
 
-1. inspect recent failures
-2. inspect telemetry
-3. inspect checkpoints
-4. fix the root cause
-5. reset only after that
+---
 
-## Diagnostics
-
-Use these when the connection or server behavior is unclear:
+## Server Diagnostics
 
 ```bash
 python cli/wrs.py server health
@@ -707,11 +628,11 @@ python cli/wrs.py server file-check
 python cli/wrs.py server php-info
 ```
 
+---
+
 ## Config Maintenance
 
-These maintenance flows are handled by the wizard:
-
-### Rotate token
+### Rotate the secret token
 
 ```bash
 python setup/wizard.py --rotate-token --site example.com
@@ -743,69 +664,58 @@ python cli/wrs.py sites
 python cli/wrs.py use example.com
 ```
 
+---
+
 ## CSS Modes
 
-WRS currently supports:
+| Mode | Behaviour |
+|------|-----------|
+| `inline` | CSS is stored in page meta and injected into `<head>` at render time. Recommended — simplest setup. |
+| `enqueue` | CSS is written to a generated file on the server and loaded with `wp_enqueue_style`. |
 
-- `inline`
-- `enqueue`
+Choose the mode at setup time. It can be changed per-site via the wizard or the WordPress admin panel.
 
-### Inline mode
+---
 
-CSS is stored in page meta and injected into the page output.
+## Security Model
 
-### Enqueue mode
-
-CSS is written to a generated asset file on the WordPress server and loaded with `wp_enqueue_style`.
-
-## Templates
-
-Starter templates are included for:
-
-- landing page
-- blog post
-- login
-- register
-- dashboard
-- contact
-- product
-- shop
-- coming soon
-
-Use them as starting points for manual editing or AI generation.
-
-## Security Summary
-
-WRS protects the plugin endpoint with:
+Every request through WRS is protected by multiple layers:
 
 ```text
-1. HTTPS only
-2. IP allowlist
-3. bcrypt token verification
-4. HMAC-SHA256 request signing
-5. timestamp replay window
-6. replay cache
-7. rate limiting
-8. master enable switch
+1. HTTPS only                         — rejected at the plugin level if not SSL
+2. IP allowlist                       — optional per-site IP restriction
+3. bcrypt token verification          — server stores only the hash, never plaintext
+4. HMAC-SHA256 request signing        — covers route + timestamp + payload
+5. Timestamp replay window (30 s)     — stale requests are rejected
+6. Replay cache                       — same signature cannot be used twice
+7. Rate limiting (20 req/min)         — per-IP
+8. Master enable switch               — single toggle disables the entire API
 ```
 
-Local plaintext token:
+The pairing code adds a separate pre-authentication path:
 
 ```text
-~/.wrs/sites/<site>/local.config.json
+9. One-time nonce (30-min expiry)     — generated by WP admin, consumed once by the CLI
+10. Pairing rate limit (5 per 15 min) — per-IP, protects the pair endpoint
+```
+
+Local token storage:
+
+```text
+~/.wrs/sites/<site>/local.config.json   plaintext token — keep out of version control
 ```
 
 Server token storage:
 
 ```text
-bcrypt hash only, never plaintext
+plugin.config.json → token_hash        bcrypt only, never plaintext
 ```
 
-## Troubleshooting For Beginners
+---
+
+## Troubleshooting
 
 ### `status` fails
-
-Check:
 
 ```bash
 python cli/wrs.py server health
@@ -813,17 +723,14 @@ python cli/wrs.py server file-check
 python cli/wrs.py config check
 ```
 
-Likely causes:
-
-- plugin not activated
-- `wp-config.php` missing `WRS_CONFIG_PATH`
-- wrong token or stale config
-- your IP not allowlisted
-- site URL mismatch
+Common causes:
+- plugin not activated in WordPress
+- `wp-config.php` missing the `WRS_CONFIG_PATH` line
+- wrong token — rotate with `python setup/wizard.py --rotate-token`
+- your IP is not allowlisted — adjust in WordPress → WP Remote Shell → Access Control
+- site URL mismatch between local config and WordPress
 
 ### A write failed
-
-Do this:
 
 ```bash
 python cli/wrs.py journal list
@@ -831,13 +738,11 @@ python cli/wrs.py checkpoint list
 python cli/wrs.py rollback --last --dry-run
 ```
 
-Then inspect the last operation before retrying.
+Inspect the last operation before retrying.
 
 ### Circuit breaker is open
 
 Do not keep retrying writes.
-
-Run:
 
 ```bash
 python cli/wrs.py circuit-breaker history
@@ -845,36 +750,72 @@ python cli/wrs.py journal list
 python cli/wrs.py checkpoint list
 ```
 
-Fix the root cause first, then reset.
+Fix the root cause, then:
 
-## Files AI Agents Should Read
+```bash
+python cli/wrs.py circuit-breaker reset
+```
 
-If an AI terminal tool is operating this repo, it should read these first:
+### Lost access from a new machine
 
-- [AGENTS.md](/D:/wprelay/AGENTS.md)
-- [AI CLI Playbook](/D:/wprelay/docs/ai-cli-playbook.md)
-- [AI Workflow](/D:/wprelay/docs/AI-WORKFLOW.md)
-- [CLI Reference](/D:/wprelay/docs/CLI-REFERENCE.md)
+Use the pairing flow — see [Connecting From A New Machine](#connecting-from-a-new-machine-pairing) above.
+
+### Connection working but want to decommission
+
+```bash
+python cli/wrs.py disconnect --revoke
+```
+
+This clears the server token and disables the API. Re-run the wizard or use pairing to reconnect.
+
+---
+
+## Templates
+
+Starter templates are included for:
+
+- landing page
+- blog post
+- login / register
+- dashboard
+- contact
+- product / shop
+- coming soon
+
+Use them as starting points for manual editing or AI generation.
+
+---
+
+## AI Agent Guide
+
+If an AI coding or terminal agent is operating this repo, read these first:
+
+- [AGENTS.md](AGENTS.md) — constraints, session flow, telemetry interpretation
+- [docs/AI-WORKFLOW.md](docs/AI-WORKFLOW.md)
+- [docs/ai-cli-playbook.md](docs/ai-cli-playbook.md)
+- [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md)
 
 ## Additional Documentation
 
-- [Quick Start](/D:/wprelay/docs/README.md)
-- [Install Guide](/D:/wprelay/docs/INSTALL.md)
-- [Security](/D:/wprelay/docs/SECURITY.md)
-- [CLI Reference](/D:/wprelay/docs/CLI-REFERENCE.md)
-- [Fault Tolerance](/D:/wprelay/docs/FAULT-TOLERANCE.md)
-- [AI Workflow](/D:/wprelay/docs/AI-WORKFLOW.md)
-- [Recovery](/D:/wprelay/docs/RECOVERY.md)
+- [docs/README.md](docs/README.md) — quick start
+- [docs/INSTALL.md](docs/INSTALL.md) — install guide
+- [docs/SECURITY.md](docs/SECURITY.md) — security detail
+- [docs/FAULT-TOLERANCE.md](docs/FAULT-TOLERANCE.md)
+- [docs/RECOVERY.md](docs/RECOVERY.md)
+
+---
 
 ## Short Version
 
-If you only remember one workflow, remember this:
-
 ```text
 edit local files
-   -> run status/config/reconcile
+   -> status / config check / circuit-breaker check / reconcile
    -> page build or page update
    -> inspect telemetry
    -> publish if desired
    -> rollback if needed
 ```
+
+Lost access from a different machine? `python cli/wrs.py pair <code>` — get the code from WordPress admin.
+
+Want to disconnect? `python cli/wrs.py disconnect` (add `--revoke` to also clear the server token).

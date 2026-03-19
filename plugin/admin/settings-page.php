@@ -140,6 +140,39 @@ function wrs_admin_checklist_items($config) {
     );
 }
 
+function wrs_handle_pair_code_generation() {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['wrs_generate_pair'])) {
+        return;
+    }
+
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+
+    check_admin_referer('wrs_gen_pair');
+
+    // 16 random bytes → 32-char hex nonce, stored for 30 min (single-use enforced by the endpoint)
+    $nonce  = bin2hex(random_bytes(16));
+    set_transient('wrs_pair_nonce', $nonce, 30 * MINUTE_IN_SECONDS);
+
+    $redirect_url = add_query_arg(
+        array('page' => 'wp-remote-shell', 'wrs-pair-ready' => '1'),
+        admin_url('admin.php')
+    );
+    wp_safe_redirect($redirect_url);
+    exit;
+}
+
+function wrs_get_current_pair_code() {
+    $nonce = get_transient('wrs_pair_nonce');
+    if (!$nonce) {
+        return null;
+    }
+    // Encode as hex(JSON{u, n}) so the CLI can decode URL + nonce from one string
+    $bundle = json_encode(array('u' => rtrim(home_url('/'), '/'), 'n' => $nonce));
+    return bin2hex($bundle);
+}
+
 function wrs_handle_settings_page_submission() {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['wrs_settings_submit'])) {
         return null;
@@ -219,6 +252,7 @@ function wrs_render_toggle_row($name, $label, $checked, $description) {
 }
 
 function wrs_render_settings_page() {
+    wrs_handle_pair_code_generation();
     $save_error = wrs_handle_settings_page_submission();
     $config = wrs_get_config();
 
@@ -474,6 +508,42 @@ function wrs_render_settings_page() {
             .wrs-admin-page .wrs-path-item code {
                 word-break: break-word;
             }
+            .wrs-admin-page .wrs-pair-code-box {
+                margin: 14px 0 0;
+                padding: 16px;
+                background: #f0f7f4;
+                border: 1px solid #b2d8c8;
+                border-radius: 12px;
+            }
+            .wrs-admin-page .wrs-pair-code-box label {
+                display: block;
+                font-weight: 600;
+                margin-bottom: 8px;
+                color: #1f7a5c;
+            }
+            .wrs-admin-page .wrs-pair-code-value {
+                display: block;
+                font-family: monospace;
+                font-size: 12px;
+                word-break: break-all;
+                padding: 10px;
+                background: #fff;
+                border: 1px solid #b2d8c8;
+                border-radius: 8px;
+                margin-bottom: 10px;
+                cursor: text;
+                user-select: all;
+            }
+            .wrs-admin-page .wrs-pair-cmd {
+                display: block;
+                font-family: monospace;
+                font-size: 12px;
+                word-break: break-all;
+                padding: 8px 10px;
+                background: #1e2b36;
+                color: #7dd3b0;
+                border-radius: 8px;
+            }
             .wrs-admin-page .wrs-submit {
                 display: flex;
                 align-items: center;
@@ -495,6 +565,9 @@ function wrs_render_settings_page() {
         </style>
         <?php if (!empty($_GET['wrs-updated'])) : ?>
             <div class="notice notice-success is-dismissible"><p>WP Remote Shell settings saved.</p></div>
+        <?php endif; ?>
+        <?php if (!empty($_GET['wrs-pair-ready'])) : ?>
+            <div class="notice notice-success is-dismissible"><p>Pairing code generated. Copy it from the <strong>CLI Pairing Code</strong> card below and paste it into the CLI. It expires in 30 minutes and works only once.</p></div>
         <?php endif; ?>
         <?php if (is_wp_error($save_error)) : ?>
             <div class="notice notice-error"><p><?php echo esc_html($save_error->get_error_message()); ?></p></div>
@@ -549,6 +622,30 @@ function wrs_render_settings_page() {
                                 </div>
                             <?php endforeach; ?>
                         </div>
+                    </section>
+
+                    <?php
+                    $pair_code = wrs_get_current_pair_code();
+                    ?>
+                    <section class="wrs-card">
+                        <h2>CLI Pairing Code</h2>
+                        <p>Lost access from your CLI machine? Generate a one-time code here, copy it, and paste it into the CLI. The code expires in <strong>30 minutes</strong> and works only once — generating a new code replaces any previous one.</p>
+                        <?php if ($pair_code) : ?>
+                            <div class="wrs-pair-code-box">
+                                <label>Pairing code (click to select all, then copy):</label>
+                                <code class="wrs-pair-code-value" id="wrs-pair-code-value"><?php echo esc_html($pair_code); ?></code>
+                                <span class="wrs-pair-cmd">python cli/wrs.py pair <?php echo esc_html($pair_code); ?></span>
+                            </div>
+                            <p style="margin-top:10px;color:#1f7a5c;"><strong>&#10003; Active</strong> — paste the command above into your terminal.</p>
+                        <?php else : ?>
+                            <p style="color:#5b7384;margin:0 0 14px;">No active pairing code. Click the button to generate one.</p>
+                        <?php endif; ?>
+                        <form method="post" style="margin-top:<?php echo $pair_code ? '0' : '0'; ?>">
+                            <?php wp_nonce_field('wrs_gen_pair'); ?>
+                            <button type="submit" name="wrs_generate_pair" value="1" class="button button-primary">
+                                <?php echo $pair_code ? 'Regenerate Pairing Code' : 'Generate CLI Pairing Code'; ?>
+                            </button>
+                        </form>
                     </section>
 
                     <section class="wrs-card">

@@ -6,5 +6,6 @@
 4. Add the generated `WRS_CONFIG_PATH` line to `wp-config.php`.
 5. Run `python cli/wrs.py status`.
 
-See [docs/INSTALL.md](/D:/wprelay/docs/INSTALL.md) for the full flow.
+The setup wizard validates input, recommends safe defaults, and shows a review screen before it writes config files.
 
+See [docs/INSTALL.md](/D:/wprelay/docs/INSTALL.md) for the full flow.

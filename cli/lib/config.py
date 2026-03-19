@@ -56,7 +56,7 @@ def site_name_from_url(site_url: str) -> str:
 
 
 def get_site_dir(site_name: str) -> Path:
-    return ensure_dir(SITES_DIR / site_name)
+    return SITES_DIR / site_name
 
 
 def get_output_dir(site_name: str) -> Path:
@@ -88,7 +88,7 @@ def get_manifest_path(local_config: dict[str, Any]) -> Path:
 
 
 def site_exists(site_name: str) -> bool:
-    return get_local_config_path(site_name).exists()
+    return (SITES_DIR / site_name / "local.config.json").exists()
 
 
 def list_sites() -> list[str]:

@@ -9,6 +9,8 @@
 
 `<site>` is the folder name derived from the WordPress site URL you entered in the wizard. For example, `https://example.com` produces `setup/output/example.com/`.
 
+The wizard is guided. It validates the site URL, explains the recommended choices for page mode and CSS mode, treats the AI CLI command as optional, recommends the safe module set, and shows a review screen before any files are written.
+
 ## WordPress setup
 
 1. In WordPress Admin, go to `Plugins` > `Add New` > `Upload Plugin`
@@ -19,7 +21,7 @@
 
 After activation, WordPress should show a top-level `WP Remote Shell` item in the left admin sidebar. The Plugins screen also includes a `Settings` link for the plugin.
 
-The first-run default is `Allow all IPs during setup` so a beginner can connect without already knowing their public IP. After the connection works, narrow the allowlist from the WordPress settings screen.
+The first-run default is `Allow all IPs during setup` so a beginner can connect without already knowing their public IP. After the connection works, narrow the allowlist with `python setup/wizard.py --only ips --site <site>`.
 
 Upload only the `.zip` file. Do not upload the whole folder and do not upload `plugin.config.json`.
 

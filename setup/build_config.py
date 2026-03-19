@@ -30,8 +30,8 @@ from setup.build_plugin import build_plugin_zip
 DEFAULT_MODULES = {
     "master_enabled": True,
     "content": True,
-    "media": True,
-    "database": True,
+    "media": False,
+    "database": False,
     "members": False,
     "email": False,
     "forms": False,
@@ -59,7 +59,7 @@ def build_site_configs(
     token: str | None = None,
     page_mode: str = "html",
     css_mode: str = "inline",
-    ai_cli_command: str = "claude",
+    ai_cli_command: str = "",
     default_status: str = "draft",
     pin: str = "123456",
 ) -> tuple[str, dict, dict]:
@@ -190,7 +190,7 @@ def upgrade_site_config(site_name: str) -> tuple[dict, dict]:
         token=local_config["token"],
         page_mode=local_config.get("page_mode", "html"),
         css_mode=local_config.get("css_mode", "inline"),
-        ai_cli_command=local_config.get("ai_cli_command", "claude"),
+        ai_cli_command=local_config.get("ai_cli_command", ""),
         default_status=local_config.get("default_status", "draft"),
         pin=local_config.get("circuit_breaker", {}).get("human_pin", "123456"),
     )

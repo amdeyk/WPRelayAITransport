@@ -146,7 +146,108 @@ function wrs_checkpoint_rollback_route(WP_REST_Request $request) {
     return rest_ensure_response(array('success' => true, 'status' => 'SUCCESS', 'rollback' => $result, 'telemetry' => wrs_build_telemetry()));
 }
 
+// ── Pairing: permission check (no token/IP required — nonce is the auth) ────
+
+function wrs_pair_permissions_check(WP_REST_Request $request) {
+    $config = wrs_get_config();
+    if (is_wp_error($config)) {
+        return $config;
+    }
+
+    if (!empty($config['require_https']) && !is_ssl()) {
+        return new WP_Error('wrs_https_required', 'HTTPS is required.', array('status' => 403));
+    }
+
+    // Rate-limit pairing attempts per IP (max 5 per 15 min)
+    $ip       = wrs_client_ip();
+    $rate_key = 'wrs_pair_rate_' . md5($ip);
+    $count    = (int) get_transient($rate_key);
+    if ($count >= 5) {
+        return new WP_Error('wrs_pair_rate_limited', 'Too many pairing attempts. Try again in 15 minutes.', array('status' => 429));
+    }
+    set_transient($rate_key, $count + 1, 15 * MINUTE_IN_SECONDS);
+
+    return true;
+}
+
+// ── POST /wrs/v1/connect/pair ────────────────────────────────────────────────
+// Accepts a one-time nonce from the WP admin panel, mints a fresh token,
+// updates the server config, and returns the token to the CLI (single use).
+
+function wrs_connect_pair(WP_REST_Request $request) {
+    $params = $request->get_json_params();
+    $nonce  = sanitize_text_field((string) ($params['nonce'] ?? ''));
+
+    if (empty($nonce)) {
+        return new WP_Error('wrs_pair_missing_nonce', 'Nonce is required.', array('status' => 400));
+    }
+
+    $stored = get_transient('wrs_pair_nonce');
+    if (!$stored || !hash_equals((string) $stored, $nonce)) {
+        return new WP_Error('wrs_pair_invalid', 'Invalid or expired pairing code. Generate a new one in WordPress.', array('status' => 403));
+    }
+
+    // Single-use: delete immediately
+    delete_transient('wrs_pair_nonce');
+
+    // Generate a fresh 64-char hex token and bcrypt hash it
+    $token      = bin2hex(random_bytes(32));
+    $token_hash = password_hash($token, PASSWORD_BCRYPT);
+
+    $config = wrs_get_config();
+    if (is_wp_error($config)) {
+        return $config;
+    }
+    $config['token_hash'] = $token_hash;
+    wrs_write_config($config);
+
+    $modules = $config['modules'] ?? array();
+    unset($modules['master_enabled']);
+
+    return rest_ensure_response(array(
+        'paired'    => true,
+        'site_url'  => rtrim($config['site_url'], '/'),
+        'site_name' => $config['site_name'],
+        'token'     => $token,
+        'page_mode' => $config['page_mode'] ?? 'html',
+        'css_mode'  => $config['css_mode']  ?? 'inline',
+        'modules'   => $modules,
+    ));
+}
+
+// ── POST /wrs/v1/connect/revoke ──────────────────────────────────────────────
+// Requires normal HMAC auth. Clears the token hash and disables master switch.
+
+function wrs_connect_revoke(WP_REST_Request $request) {
+    $config = wrs_get_config();
+    if (is_wp_error($config)) {
+        return $config;
+    }
+
+    $config['token_hash']                = '';
+    $config['modules']['master_enabled'] = false;
+    wrs_write_config($config);
+    delete_transient('wrs_pair_nonce');
+
+    return rest_ensure_response(array(
+        'revoked' => true,
+        'message' => 'Token cleared and master switch disabled. Use the WP admin panel or re-run the setup wizard to reconnect.',
+    ));
+}
+
 function wrs_register_routes() {
+    register_rest_route('wrs/v1', '/connect/pair', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'wrs_connect_pair',
+        'permission_callback' => 'wrs_pair_permissions_check',
+    ));
+
+    register_rest_route('wrs/v1', '/connect/revoke', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'wrs_connect_revoke',
+        'permission_callback' => 'wrs_permissions_check',
+    ));
+
     register_rest_route('wrs/v1', '/server/ping', array(
         'methods' => WP_REST_Server::READABLE,
         'callback' => 'wrs_server_ping',

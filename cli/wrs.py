@@ -15,6 +15,7 @@ from cli.lib.config import get_active_site, list_sites, set_active_site
 from cli.modules.checkpoint_cmd import checkpoint_group
 from cli.modules.config_cmd import config_group
 from cli.modules.circuit_cmd import circuit_group
+from cli.modules.connect import disconnect_command, pair_command
 from cli.modules.deploy import deploy_command
 from cli.modules.journal_cmd import journal_group
 from cli.modules.page import page_group
@@ -76,6 +77,8 @@ def use_site(site_name: str) -> None:
 cli.add_command(page_group)
 cli.add_command(server_group)
 cli.add_command(setup_group)
+cli.add_command(pair_command)
+cli.add_command(disconnect_command)
 cli.add_command(circuit_group)
 cli.add_command(deploy_command)
 cli.add_command(journal_group)

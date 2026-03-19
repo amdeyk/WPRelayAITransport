@@ -42,7 +42,11 @@ def _write_page_files(local_config: dict, slug: str, html: str, css: str = "") -
 
 
 def _run_ai(local_config: dict, prompt: str) -> tuple[str, str]:
-    command = local_config.get("ai_cli_command", "claude")
+    command = (local_config.get("ai_cli_command") or "").strip()
+    if not command:
+        raise click.ClickException(
+            "No AI CLI command is configured for this site. Run `python setup/wizard.py` for a new site or set `ai_cli_command` in the site config."
+        )
     result = subprocess.run(
         command,
         input=prompt,
