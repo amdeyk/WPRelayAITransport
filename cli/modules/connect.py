@@ -24,6 +24,7 @@ from cli.lib.config import (
     set_active_site,
     site_name_from_url,
 )
+from cli.lib.http import COMMON_JSON_HEADERS
 from setup.build_config import DEFAULT_DEPLOY_ORDER
 
 console = Console()
@@ -66,7 +67,7 @@ def pair_command(code: str, project_path: str | None, pin: str | None) -> None:
     # Call the plugin's pairing endpoint — no HMAC needed; the nonce is the auth.
     pair_endpoint = f"{site_url}/wp-json/wrs/v1/connect/pair"
     try:
-        resp = requests.post(pair_endpoint, json={"nonce": nonce}, timeout=30)
+        resp = requests.post(pair_endpoint, json={"nonce": nonce}, headers=COMMON_JSON_HEADERS, timeout=30)
     except requests.RequestException as exc:
         raise click.ClickException(f"Could not reach {site_url}: {exc}") from exc
 
