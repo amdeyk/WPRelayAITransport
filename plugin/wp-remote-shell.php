@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WP Remote Shell
  * Description: Authenticated CLI bridge for WordPress remote operations.
- * Version: 0.1.0
+ * Version: 0.2.0
  * Author: WRS
  */
 
@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WRS_PLUGIN_VERSION', '0.1.0');
+define('WRS_PLUGIN_VERSION', '0.2.0');
 define('WRS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 
 require_once WRS_PLUGIN_DIR . 'includes/config-loader.php';

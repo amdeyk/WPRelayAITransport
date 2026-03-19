@@ -18,12 +18,18 @@ Implemented and safe to use:
 
 - setup/build flow
 - config generation and maintenance
+- preflight checks — run before every session
 - status/config/server diagnostics
-- page build/update/update-css/get/diff/list/publish/clone/set-image/set-meta/delete
+- page build/update/update-css/get/diff/list/list-all/publish/clone/set-image/set-meta/delete
+- page inspect — full inspection of any page by slug, ID, or front-page (`--front`)
+- page adopt — explicitly mark an unmanaged page as WRS-managed
+- page css-override — inject CSS into any page without adoption or content changes
+- page elementor-get — download Elementor JSON data for a page
+- page elementor-set — upload Elementor JSON data back to a live page
 - page generate and ai-update through `ai_cli_command`
 - journal inspection
-- checkpoint inspection
-- rollback by checkpoint or recent operation
+- checkpoint inspection (checkpoints now include Elementor data)
+- rollback by checkpoint or recent operation (handles HTML and Elementor pages)
 - pull and pull-all-pages
 - page reconciliation
 
@@ -46,13 +52,13 @@ If asked to operate one of the unimplemented modules, say it is not implemented 
 Run these in order before write operations:
 
 ```bash
-python cli/wrs.py status
-python cli/wrs.py config check
-python cli/wrs.py circuit-breaker status
+python cli/wrs.py preflight
 python cli/wrs.py reconcile --all
 ```
 
-If `status` fails, stop and diagnose with:
+The preflight checks: local config, site reachability, plugin authentication, server health, server config file, circuit breaker state, content module status, and PHP environment. If any check fails, stop and address the reported issue before proceeding.
+
+If `preflight` fails on `Plugin ping (auth)`, diagnose with:
 
 ```bash
 python cli/wrs.py server health
@@ -76,12 +82,14 @@ python cli/wrs.py circuit-breaker reset
 
 ## Safe Defaults
 
+- Run preflight before every session.
 - Prefer read operations before write operations.
 - Prefer local file edits plus `page update` over blind remote mutation.
 - Prefer `draft` unless the user explicitly wants `publish`.
 - Prefer reviewing diffs before publish.
-- Prefer `page update-css` for style-only changes.
+- Prefer `page update-css` or `page css-override` for style-only changes.
 - Use `rollback --last --dry-run` before an actual rollback when recovering.
+- Never run `page build` or `page update` on a page that reports `builder = elementor`.
 
 ## Page Workflows
 
@@ -91,7 +99,7 @@ python cli/wrs.py circuit-breaker reset
 python cli/wrs.py page build --file pages/home.html --css pages-css/home.css --slug home --title "Home"
 ```
 
-### Update an existing page
+### Update an existing WRS-managed page
 
 ```bash
 python cli/wrs.py page update --file pages/home.html --css pages-css/home.css --slug home
@@ -109,6 +117,7 @@ python cli/wrs.py page update-css --slug home --css pages-css/home.css
 python cli/wrs.py page get --slug home
 python cli/wrs.py page diff --slug home --file pages/home.html
 python cli/wrs.py page list
+python cli/wrs.py page list --all
 ```
 
 ### Publish, clone, image, SEO
@@ -119,6 +128,73 @@ python cli/wrs.py page clone --slug home --new-slug home-v2
 python cli/wrs.py page set-image --slug home --media-id 42
 python cli/wrs.py page set-meta --slug home --title "SEO Title" --description "Meta description"
 ```
+
+## Inspecting Unmanaged or Unknown Pages
+
+Before working with any existing WordPress page that WRS did not create, inspect it first:
+
+```bash
+python cli/wrs.py page inspect --slug home-2
+python cli/wrs.py page inspect --id 1167
+python cli/wrs.py page inspect --front
+```
+
+The inspection output tells you:
+- `is_wrs_managed`: whether WRS owns the page
+- `builder`: `elementor` or `none`
+- `is_front_page`: whether it is the static front page
+- `has_wrs_source`: whether WRS source HTML is stored
+- `has_wrs_css_override`: whether a CSS override is active
+- `has_elementor_data`: whether Elementor JSON data exists on the server
+
+## Adopting an Existing Page
+
+Adoption is required before running content edits on an unmanaged page. It is an explicit step — pages should not silently become managed.
+
+```bash
+python cli/wrs.py page adopt --slug home-2
+python cli/wrs.py page adopt --id 1167
+```
+
+Adoption sets `_wrs_managed`, records the page mode (`html` or `elementor`), and creates a checkpoint. For Elementor pages it does not touch builder data.
+
+Do not adopt a page and then immediately run `page build` or `page update` on it if `builder = elementor`. Use `page elementor-set` instead.
+
+## CSS Override (Safe For Elementor Pages)
+
+To make visual changes to any live page without taking over its content:
+
+```bash
+python cli/wrs.py page css-override --slug home-2 --css overrides/welcome-color.css
+```
+
+This injects CSS via `wp_head`. It does not affect Elementor data or the page template. No adoption required. A checkpoint is created before the CSS is written.
+
+## Elementor Page Workflows
+
+### Download Elementor JSON
+
+```bash
+python cli/wrs.py page elementor-get --slug home-2
+python cli/wrs.py page elementor-get --id 1167
+python cli/wrs.py page elementor-get --slug home-2 --output elementor/home-2.json
+```
+
+The saved JSON contains `elementor_data` (the widget tree) and `page_settings`.
+
+### Upload modified Elementor JSON
+
+```bash
+python cli/wrs.py page elementor-set --slug home-2 --file elementor/home-2.json
+```
+
+This updates `_elementor_data` on the live page and clears Elementor's CSS cache. It does not overwrite `post_content`. A checkpoint is created before writing.
+
+### Constraints for Elementor pages
+
+- Do not use `page build` or `page update` on Elementor pages. Those commands write HTML content and will destroy the Elementor structure.
+- Do not set `_wrs_canvas` on Elementor pages. This is handled automatically.
+- Elementor's CSS regenerates on the next page view after `elementor-set`. If it looks stale, tell the user to hard-reload.
 
 ## AI-Assisted Page Generation
 
@@ -187,6 +263,8 @@ python cli/wrs.py rollback --op-id <id>
 python cli/wrs.py rollback --checkpoint-id <id>
 ```
 
+Rollback correctly handles both HTML and Elementor pages. For Elementor pages it restores `_elementor_data` and clears the CSS cache without touching `post_content`.
+
 ## How To Interpret Telemetry
 
 Important response fields:
@@ -230,19 +308,22 @@ python setup/wizard.py --new-site
 
 ## Constraints
 
+- Run preflight before every session.
 - Do not edit `~/.wrs/sites/<site>/local.config.json` manually unless the user explicitly asks.
 - Do not store plaintext tokens in the repo.
 - Do not bypass WRS with direct database writes unless the user explicitly requests that level of intervention.
 - Do not claim support for modules that are not implemented yet.
 - Do not retry failed writes in a loop.
+- Do not use `page build` or `page update` on Elementor pages.
+- Do not adopt a page silently — adoption must be an explicit deliberate step.
 
 ## Good Operator Pattern
 
-1. Inspect state.
-2. Pull or diff if necessary.
-3. Edit local files.
-4. Run the smallest valid WRS command.
-5. Read telemetry and journal output.
-6. Reconcile if the result is unexpected.
-7. Roll back if necessary.
-
+1. Run preflight.
+2. Inspect state (page inspect, page list --all, page diff).
+3. Pull or diff if necessary.
+4. Edit local files.
+5. Run the smallest valid WRS command.
+6. Read telemetry and journal output.
+7. Reconcile if the result is unexpected.
+8. Roll back if necessary.

@@ -189,21 +189,22 @@ def diff_page(site_name: str | None, slug: str, html_file: Path) -> None:
 
 @page_group.command("list")
 @click.option("--site", "site_name", default=None, help="Configured site name.")
-def list_pages(site_name: str | None) -> None:
+@click.option("--all", "all_pages", is_flag=True, default=False, help="List all pages, not just WRS-managed ones.")
+def list_pages(site_name: str | None, all_pages: bool) -> None:
     _, client = get_site_context(site_name)
-    response = client.request("GET", "/content/page/list")
-    table = Table(title="Pages")
-    for column in ("id", "slug", "title", "status", "mode", "modified"):
+    params = {"all": "1"} if all_pages else {}
+    response = client.request("GET", "/content/page/list", params=params)
+    if all_pages:
+        columns = ("id", "slug", "title", "status", "builder", "is_wrs_managed", "is_front_page")
+        title = "All Pages"
+    else:
+        columns = ("id", "slug", "title", "status", "mode", "modified")
+        title = "Managed Pages"
+    table = Table(title=title)
+    for column in columns:
         table.add_column(column)
     for page in response.get("pages", []):
-        table.add_row(
-            str(page.get("id", "")),
-            page.get("slug", ""),
-            page.get("title", ""),
-            page.get("status", ""),
-            page.get("mode", ""),
-            page.get("modified", ""),
-        )
+        table.add_row(*[str(page.get(c, "")) for c in columns])
     console.print(table)
 
 
@@ -357,3 +358,157 @@ def delete_page(site_name: str | None, slug: str) -> None:
         payload_summary=f"{slug} delete",
     )
     console.print(f"[green]Deleted[/green] {slug}")
+
+
+@page_group.command("inspect")
+@click.option("--site", "site_name", default=None, help="Configured site name.")
+@click.option("--slug", default=None, help="Page slug.")
+@click.option("--id", "page_id", default=None, type=int, help="Page ID.")
+@click.option("--front", is_flag=True, default=False, help="Inspect the static front page (resolves / automatically).")
+def inspect_page(site_name: str | None, slug: str | None, page_id: int | None, front: bool) -> None:
+    """Inspect any page: builder type, WRS ownership, source availability."""
+    _, client = get_site_context(site_name)
+    params: dict = {}
+    if front:
+        params["front"] = "1"
+    elif page_id:
+        params["id"] = page_id
+    elif slug:
+        params["slug"] = slug
+    else:
+        raise click.ClickException("Provide --slug, --id, or --front.")
+    response = client.request("GET", "/content/page/inspect", params=params)
+    page = response["page"]
+    table = Table(title=f"Page Inspection: {page.get('title', '')}")
+    table.add_column("Field")
+    table.add_column("Value")
+    for key, val in page.items():
+        table.add_row(key, str(val) if val is not None else "—")
+    console.print(table)
+
+
+@page_group.command("adopt")
+@click.option("--site", "site_name", default=None, help="Configured site name.")
+@click.option("--slug", default=None, help="Page slug.")
+@click.option("--id", "page_id", default=None, type=int, help="Page ID.")
+def adopt_page(site_name: str | None, slug: str | None, page_id: int | None) -> None:
+    """Mark an existing unmanaged page as WRS-managed (required before content edits)."""
+    local_config, client = get_site_context(site_name)
+    payload: dict = {}
+    if page_id:
+        payload["id"] = page_id
+        ident = str(page_id)
+    elif slug:
+        payload["slug"] = slug
+        ident = slug
+    else:
+        raise click.ClickException("Provide --slug or --id.")
+    response = run_write_operation(
+        local_config["site_name"],
+        local_config,
+        client,
+        op_type="page.adopt",
+        endpoint="/content/page/adopt",
+        payload=payload,
+        checkpoint_targets={"kind": "page", "slug": ident},
+        payload_summary=f"{ident} adopt",
+    )
+    page = response.get("page", {})
+    console.print(
+        f"[green]Adopted[/green] id={page.get('id')} slug={page.get('slug')} "
+        f"builder={page.get('builder')} mode={page.get('mode')}"
+    )
+
+
+@page_group.command("css-override")
+@click.option("--site", "site_name", default=None, help="Configured site name.")
+@click.option("--slug", required=True, help="Page slug (e.g. home-2 for the front page).")
+@click.option("--css", "css_file", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def css_override(site_name: str | None, slug: str, css_file: Path) -> None:
+    """Inject CSS overrides into any page without adopting or changing its content.
+
+    Safe to use on Elementor pages. The CSS is injected via wp_head and does not
+    affect the page builder data or template.
+    """
+    local_config, client = get_site_context(site_name)
+    response = run_write_operation(
+        local_config["site_name"],
+        local_config,
+        client,
+        op_type="page.css-override",
+        endpoint="/content/page/update-css",
+        payload={"slug": slug, "css": css_file.read_text(encoding="utf-8"), "css_mode": local_config.get("css_mode", "inline")},
+        checkpoint_targets={"kind": "page", "slug": slug},
+        payload_summary=f"{slug} css-override",
+    )
+    console.print(f"[green]CSS override applied[/green] {slug} (id={response.get('page', {}).get('id')})")
+
+
+@page_group.command("elementor-get")
+@click.option("--site", "site_name", default=None, help="Configured site name.")
+@click.option("--slug", default=None, help="Page slug.")
+@click.option("--id", "page_id", default=None, type=int, help="Page ID.")
+@click.option("--output", default=None, type=click.Path(dir_okay=False, path_type=Path), help="Output JSON file path.")
+def elementor_get(site_name: str | None, slug: str | None, page_id: int | None, output: Path | None) -> None:
+    """Download Elementor JSON data for a page to a local file."""
+    local_config, client = get_site_context(site_name)
+    params: dict = {}
+    if page_id:
+        params["id"] = page_id
+    elif slug:
+        params["slug"] = slug
+    else:
+        raise click.ClickException("Provide --slug or --id.")
+    response = client.request("GET", "/content/page/elementor/get", params=params)
+    artifact = {
+        "page_id": response["page_id"],
+        "slug": response["slug"],
+        "title": response["title"],
+        "elementor_data": response["elementor_data"],
+        "page_settings": response["page_settings"],
+    }
+    if output is None:
+        out_slug = response.get("slug") or str(response.get("page_id", "page"))
+        output = resolve_project_file(local_config, f"elementor/{out_slug}.json")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(artifact, indent=2, ensure_ascii=False), encoding="utf-8")
+    console.print(f"[green]Saved[/green] Elementor data ({response['slug']}) -> {output}")
+
+
+@page_group.command("elementor-set")
+@click.option("--site", "site_name", default=None, help="Configured site name.")
+@click.option("--slug", default=None, help="Page slug.")
+@click.option("--id", "page_id", default=None, type=int, help="Page ID.")
+@click.option("--file", "json_file", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="JSON file produced by elementor-get (or a raw elementor_data array).")
+def elementor_set(site_name: str | None, slug: str | None, page_id: int | None, json_file: Path) -> None:
+    """Upload Elementor JSON data to a live page. Clears Elementor's CSS cache."""
+    local_config, client = get_site_context(site_name)
+    raw = json.loads(json_file.read_text(encoding="utf-8"))
+    # Accept either a raw array (elementor_data only) or the full artifact from elementor-get.
+    if isinstance(raw, list):
+        elementor_data = raw
+        page_settings: dict = {}
+    else:
+        elementor_data = raw.get("elementor_data", raw)
+        page_settings = raw.get("page_settings", {})
+    payload: dict = {"elementor_data": elementor_data, "page_settings": page_settings}
+    if page_id:
+        payload["id"] = page_id
+        ident = str(page_id)
+    elif slug:
+        payload["slug"] = slug
+        ident = slug
+    else:
+        raise click.ClickException("Provide --slug or --id.")
+    response = run_write_operation(
+        local_config["site_name"],
+        local_config,
+        client,
+        op_type="page.elementor-set",
+        endpoint="/content/page/elementor/set",
+        payload=payload,
+        checkpoint_targets={"kind": "page", "slug": ident},
+        payload_summary=f"{ident} elementor-set",
+    )
+    console.print(f"[green]Elementor data applied[/green] {response.get('slug')} (id={response.get('page_id')})")

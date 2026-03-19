@@ -144,7 +144,7 @@ def pair_command(code: str, project_path: str | None, pin: str | None) -> None:
     console.print(f"\n[green]Paired successfully.[/green]")
     console.print(f"Site:    {site_name}")
     console.print(f"Project: {project_path}")
-    console.print("Run [bold]python cli/wrs.py status[/bold] to confirm the connection.")
+    console.print("Run [bold]python cli/wrs.py preflight[/bold] to verify the full setup.")
 
 
 @click.command("disconnect")

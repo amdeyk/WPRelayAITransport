@@ -7,16 +7,19 @@
 - `python cli/wrs.py use <site>`
 - `python cli/wrs.py config check`
 - `python cli/wrs.py setup deploy-config`
+- `python cli/wrs.py preflight`
+- `python cli/wrs.py preflight --site example.com`
 
-## Pages
+## Pages — WRS-managed
 
 - `python cli/wrs.py page build --file pages/home.html --slug home --title "Home"`
+- `python cli/wrs.py page build --file pages/home.html --css pages-css/home.css --slug home --title "Home" --publish`
 - `python cli/wrs.py page update --file pages/home.html --slug home`
 - `python cli/wrs.py page update-css --slug home --css pages-css/home.css`
-- `python cli/wrs.py page build --file pages/home.html --css pages-css/home.css --slug home --title "Home" --publish`
 - `python cli/wrs.py page get --slug home`
 - `python cli/wrs.py page diff --slug home --file pages/home.html`
 - `python cli/wrs.py page list`
+- `python cli/wrs.py page list --all`
 - `python cli/wrs.py page publish --slug home`
 - `python cli/wrs.py page clone --slug home --new-slug home-v2`
 - `python cli/wrs.py page set-image --slug home --media-id 42`
@@ -24,6 +27,26 @@
 - `python cli/wrs.py page generate --slug home --prompt "Landing page for a fitness app"`
 - `python cli/wrs.py page ai-update --slug home --instruction "Add testimonials"`
 - `python cli/wrs.py page delete --slug home`
+
+## Pages — inspection and adoption
+
+- `python cli/wrs.py page inspect --slug home-2`
+- `python cli/wrs.py page inspect --id 1167`
+- `python cli/wrs.py page inspect --front`
+- `python cli/wrs.py page adopt --slug home-2`
+- `python cli/wrs.py page adopt --id 1167`
+
+## Pages — CSS override (any page, no adoption required)
+
+- `python cli/wrs.py page css-override --slug home-2 --css overrides/welcome.css`
+
+## Pages — Elementor
+
+- `python cli/wrs.py page elementor-get --slug home-2`
+- `python cli/wrs.py page elementor-get --id 1167`
+- `python cli/wrs.py page elementor-get --slug home-2 --output elementor/home-2.json`
+- `python cli/wrs.py page elementor-set --slug home-2 --file elementor/home-2.json`
+- `python cli/wrs.py page elementor-set --id 1167 --file elementor/home-2.json`
 
 ## Deploy
 
@@ -52,7 +75,9 @@
 - `python cli/wrs.py checkpoint show --checkpoint-id <id>`
 - `python cli/wrs.py checkpoint clear`
 - `python cli/wrs.py rollback --last`
+- `python cli/wrs.py rollback --last --dry-run`
 - `python cli/wrs.py rollback --op-id <id>`
+- `python cli/wrs.py rollback --checkpoint-id <id>`
 
 ## Reconcile / Server
 
@@ -63,3 +88,9 @@
 - `python cli/wrs.py server db-status`
 - `python cli/wrs.py server file-check`
 - `python cli/wrs.py server php-info`
+
+## Connect / Disconnect
+
+- `python cli/wrs.py pair <hex-code>`
+- `python cli/wrs.py disconnect`
+- `python cli/wrs.py disconnect --revoke`

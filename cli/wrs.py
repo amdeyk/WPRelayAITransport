@@ -17,6 +17,7 @@ from cli.modules.config_cmd import config_group
 from cli.modules.circuit_cmd import circuit_group
 from cli.modules.connect import disconnect_command, pair_command
 from cli.modules.deploy import deploy_command
+from cli.modules.preflight_cmd import preflight_command
 from cli.modules.journal_cmd import journal_group
 from cli.modules.page import page_group
 from cli.modules.reconcile_cmd import reconcile_group
@@ -86,6 +87,7 @@ cli.add_command(checkpoint_group)
 cli.add_command(rollback_command)
 cli.add_command(reconcile_group)
 cli.add_command(config_group)
+cli.add_command(preflight_command)
 
 
 @cli.command("pull")

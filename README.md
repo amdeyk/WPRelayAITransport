@@ -2,7 +2,7 @@
 
 WP Remote Shell (WRS) is a CLI-first WordPress operations system.
 
-It lets you build and update WordPress pages from local files and push those changes through a signed API bridge instead of using the WordPress Admin for day-to-day editing.
+It lets you build and update WordPress pages from local files and push those changes through a signed API bridge instead of using the WordPress Admin for day-to-day editing. It also supports inspecting, adopting, and managing Elementor pages without destroying their builder data.
 
 Today this repository is strongest in one complete vertical slice:
 
@@ -11,9 +11,13 @@ Today this repository is strongest in one complete vertical slice:
 - journaling and checkpoints
 - rollback support
 - page build / update / publish workflows
+- page inspection and adoption for unmanaged and builder-based pages
+- CSS overrides for any page (including Elementor pages)
+- Elementor page read/write via JSON data
 - AI-assisted page generation and update
 - CLI pairing (connect a new machine without running the full wizard)
 - disconnect and server-side token revocation
+- preflight checks — verify the full stack before operating
 
 The larger product vision includes many more modules, but this repo currently centers on safe WordPress page operations.
 
@@ -38,6 +42,7 @@ That means:
 - a checkpoint is created before every change
 - rollback is a single command if something goes wrong
 - an AI CLI can operate through the same commands instead of inventing its own flow
+- Elementor pages can be inspected and managed without converting them to plain HTML
 
 ## Architecture
 
@@ -50,6 +55,7 @@ That means:
 
     pages/home.html
     pages-css/home.css
+    elementor/home-2.json
     journal.ndjson
     circuit.json
     local.config.json
@@ -64,6 +70,7 @@ That means:
     | journal writer   |
     | checkpoint client|
     | circuit breaker  |
+    | preflight checks |
     +------------------+
            |
            | HTTPS + token + HMAC + timestamp + IP allowlist
@@ -74,6 +81,7 @@ That means:
     | auth gate        |
     | router           |
     | content module   |
+    | elementor module |
     | telemetry        |
     | checkpoint store |
     | server journal   |
@@ -85,6 +93,7 @@ That means:
     |------------------|
     | pages            |
     | post meta        |
+    | elementor meta   |
     | theme rendering  |
     +------------------+
 ```
@@ -108,15 +117,16 @@ Implemented and working now:
   - master enable switch
 - local journal
 - circuit breaker
-- server-side checkpoints
-- rollback from checkpoints
+- server-side checkpoints (including Elementor data snapshots)
+- rollback from checkpoints (HTML and Elementor pages)
+- preflight checks — end-to-end validation before operating
 - page operations:
   - build
   - update
   - update-css
   - get
   - diff
-  - list
+  - list / list --all (all pages, not just managed ones)
   - publish
   - clone
   - set-image
@@ -124,6 +134,11 @@ Implemented and working now:
   - delete
   - generate (AI)
   - ai-update (AI)
+  - inspect — full inspection of any page by slug, ID, or front-page
+  - adopt — explicitly mark an unmanaged page as WRS-managed
+  - css-override — inject CSS into any page without adoption
+  - elementor-get — download Elementor JSON data for a page
+  - elementor-set — upload Elementor JSON data back to a live page
 - server diagnostics:
   - health
   - errors
@@ -157,9 +172,9 @@ Not fully implemented yet:
 |-- cli/
 |   |-- wrs.py                   main CLI entrypoint
 |   |-- lib/                     config, HTTP, journal, checkpoint, circuit logic
-|   `-- modules/                 page, server, setup, connect, rollback, reconcile, etc.
+|   `-- modules/                 page, server, setup, connect, preflight, rollback, reconcile, etc.
 |-- plugin/
-|   |-- wp-remote-shell.php      plugin bootstrap
+|   |-- wp-remote-shell.php      plugin bootstrap (v0.2.0)
 |   |-- includes/                auth, router, telemetry, checkpoint helpers
 |   |-- modules/                 WordPress capability modules
 |   |-- admin/                   WordPress admin settings page
@@ -245,6 +260,7 @@ setup/output/<site>/wp-remote-shell.zip    plugin ZIP to upload to WordPress
 setup/output/<site>/wp-config-line.txt     one line to add to wp-config.php
 <project_path>/pages/                      local page HTML files go here
 <project_path>/pages-css/                  local page CSS files go here
+<project_path>/elementor/                  local Elementor JSON files go here
 ```
 
 `<site>` is derived from your WordPress URL. `https://example.com` becomes `example.com`.
@@ -276,15 +292,26 @@ Paste that line into `wp-config.php` above the `/* That's all, stop editing! */`
 python cli/wrs.py setup deploy-config
 ```
 
-### Step 8: Verify the connection
+### Step 8: Run the preflight check
 
 ```bash
-python cli/wrs.py status
-python cli/wrs.py config check
-python cli/wrs.py server health
+python cli/wrs.py preflight
 ```
 
-If all three succeed, the CLI and plugin are talking to each other.
+The preflight runs **8 checks** in sequence and prints a pass/fail table:
+
+| Check | What it verifies |
+|-------|-----------------|
+| Local config | Required fields are present in `~/.wrs/sites/<site>/local.config.json` |
+| Site reachable | The site URL responds over HTTP |
+| Plugin ping (auth) | An authenticated request reaches the WRS plugin and the token is valid |
+| Server health | Server reports `status=ok` |
+| Server config file | `plugin.config.json` exists on the server at the expected path |
+| Circuit breaker | The circuit breaker is CLOSED (writes are allowed) |
+| Content module | The content module is enabled in the server config |
+| PHP environment | Reports PHP version, memory limit, and max execution time (informational) |
+
+If all checks pass, you are ready to operate. Any failure shows the exact reason and which remediation to run.
 
 ---
 
@@ -311,10 +338,10 @@ python cli/wrs.py pair <hex-code>
 
 The wizard asks for two things the server cannot know — your local project path and a circuit-breaker PIN — then writes the local config automatically.
 
-Confirm the connection:
+Confirm the connection with the preflight check:
 
 ```bash
-python cli/wrs.py status
+python cli/wrs.py preflight
 ```
 
 ### How pairing works (for reference)
@@ -364,9 +391,7 @@ This makes an authenticated request to clear the token hash and disable the plug
 Use this order every time:
 
 ```bash
-python cli/wrs.py status
-python cli/wrs.py config check
-python cli/wrs.py circuit-breaker status
+python cli/wrs.py preflight
 python cli/wrs.py reconcile --all
 ```
 
@@ -379,6 +404,8 @@ Then:
 4. inspect telemetry and journal
 5. roll back if necessary
 ```
+
+If the preflight fails, stop and fix the reported issue before writing anything. Do not bypass the preflight by running write commands directly.
 
 ---
 
@@ -394,6 +421,8 @@ Then:
 |   |-- home.css
 |   |-- about.css
 |   `-- contact.css
+|-- elementor/
+|   `-- home-2.json            Elementor page JSON (from page elementor-get)
 |-- partials/
 |-- posts/
 |-- media/
@@ -401,7 +430,7 @@ Then:
 `-- wrs-manifest.json
 ```
 
-For the current implementation `pages/` and `pages-css/` are the most important directories.
+For the current implementation `pages/`, `pages-css/`, and `elementor/` are the most important directories.
 
 ---
 
@@ -453,11 +482,19 @@ python cli/wrs.py pull --all-pages
 python cli/wrs.py page diff --slug home --file pages/home.html
 ```
 
-### List all WRS-managed pages
+### List WRS-managed pages
 
 ```bash
 python cli/wrs.py page list
 ```
+
+### List all pages (including unmanaged)
+
+```bash
+python cli/wrs.py page list --all
+```
+
+Shows all WordPress pages with their builder type, managed status, and whether they are the static front page.
 
 ### Publish a draft
 
@@ -488,6 +525,107 @@ python cli/wrs.py page set-meta --slug home --title "SEO Title" --description "S
 ```bash
 python cli/wrs.py page delete --slug home
 ```
+
+---
+
+## Inspecting Any Page
+
+### Inspect by slug
+
+```bash
+python cli/wrs.py page inspect --slug home-2
+```
+
+### Inspect by page ID
+
+```bash
+python cli/wrs.py page inspect --id 1167
+```
+
+### Inspect the static front page
+
+```bash
+python cli/wrs.py page inspect --front
+```
+
+The inspection report shows: page ID, slug, title, status, whether it is the front page, the front-page URL, whether it is WRS-managed, which builder it uses (`elementor` or `none`), WRS source lengths, and the live page URL.
+
+This is the right first command when working with a page that was not created by WRS.
+
+---
+
+## Adopting an Existing Page
+
+Before running content edits on an existing unmanaged page you must adopt it. Adoption is explicit and cannot be reversed automatically — it is a deliberate ownership decision.
+
+```bash
+python cli/wrs.py page adopt --slug home-2
+python cli/wrs.py page adopt --id 1167
+```
+
+What adoption does:
+
+- Sets `_wrs_managed = 1` on the page
+- Sets `_wrs_page_mode` to `elementor` or `html` based on what the page actually uses
+- For HTML pages only: seeds `_wrs_source_html` from `post_content` if the field is currently empty
+- For Elementor pages: does **not** touch any builder data — only records ownership
+
+After adoption the page appears in `page list` and checkpoints are taken before further edits.
+
+---
+
+## CSS Overrides
+
+To inject a CSS override into any page — including Elementor pages — without adopting it or touching its content:
+
+```bash
+python cli/wrs.py page css-override --slug home-2 --css overrides/welcome-color.css
+```
+
+The CSS is injected via `wp_head` at render time. It does not affect Elementor data, post content, or the page template. This is the fastest safe path to make visual changes on a live Elementor page.
+
+To remove the override, push an empty CSS file or use `page update-css` with an empty file.
+
+---
+
+## Elementor Pages
+
+### Inspect to confirm it is an Elementor page
+
+```bash
+python cli/wrs.py page inspect --front
+```
+
+Look for `builder = elementor` in the output.
+
+### Download the Elementor JSON data
+
+```bash
+python cli/wrs.py page elementor-get --slug home-2
+python cli/wrs.py page elementor-get --id 1167
+python cli/wrs.py page elementor-get --slug home-2 --output elementor/home-2.json
+```
+
+This saves a JSON file containing `elementor_data` (the widget tree) and `page_settings`. The file is the local source of truth for the Elementor page.
+
+### Upload modified Elementor JSON data
+
+```bash
+python cli/wrs.py page elementor-set --slug home-2 --file elementor/home-2.json
+```
+
+This writes the Elementor data back to the live page. It:
+
+- Updates `_elementor_data` in WordPress post meta
+- Clears Elementor's generated CSS cache so styles regenerate on the next page view
+- Does **not** overwrite `post_content` or touch the page template
+- Creates a checkpoint before writing so you can roll back if needed
+
+### Notes on Elementor safety
+
+- Never run `page build` or `page update` on a page with `builder = elementor`. Those commands write HTML content and would overwrite the Elementor structure.
+- Use `page adopt` before `elementor-set` if you want the page tracked in WRS.
+- Use `page css-override` for visual changes that do not require editing the widget tree.
 
 ---
 
@@ -578,7 +716,7 @@ python cli/wrs.py journal export --output journal.json
 
 ### Checkpoints
 
-WRS creates a checkpoint before every write operation.
+WRS creates a checkpoint before every write operation. For Elementor pages, the checkpoint includes the full `elementor_data` so a rollback restores the builder content, not just WRS meta.
 
 ```bash
 python cli/wrs.py checkpoint list
@@ -715,6 +853,16 @@ plugin.config.json → token_hash        bcrypt only, never plaintext
 
 ## Troubleshooting
 
+### Preflight fails
+
+Run preflight first to get a specific diagnosis:
+
+```bash
+python cli/wrs.py preflight
+```
+
+Each failing check shows the exact reason and a remediation hint.
+
 ### `status` fails
 
 ```bash
@@ -768,6 +916,10 @@ python cli/wrs.py disconnect --revoke
 
 This clears the server token and disables the API. Re-run the wizard or use pairing to reconnect.
 
+### Elementor page not updating after elementor-set
+
+Elementor's CSS is regenerated on the next page view after the cache is cleared. If styles still look stale, hard-reload the browser (Ctrl+Shift+R / Cmd+Shift+R) or purge any active page-caching plugin.
+
 ---
 
 ## Templates
@@ -809,7 +961,8 @@ If an AI coding or terminal agent is operating this repo, read these first:
 
 ```text
 edit local files
-   -> status / config check / circuit-breaker check / reconcile
+   -> preflight
+   -> reconcile --all
    -> page build or page update
    -> inspect telemetry
    -> publish if desired
@@ -819,3 +972,5 @@ edit local files
 Lost access from a different machine? `python cli/wrs.py pair <code>` — get the code from WordPress admin.
 
 Want to disconnect? `python cli/wrs.py disconnect` (add `--revoke` to also clear the server token).
+
+Plugin version: **0.2.0**

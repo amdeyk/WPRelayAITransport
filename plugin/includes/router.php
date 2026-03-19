@@ -367,4 +367,28 @@ function wrs_register_routes() {
         'callback' => 'wrs_content_delete_page',
         'permission_callback' => 'wrs_permissions_check',
     ));
+
+    register_rest_route('wrs/v1', '/content/page/inspect', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'wrs_content_inspect_page',
+        'permission_callback' => 'wrs_permissions_check',
+    ));
+
+    register_rest_route('wrs/v1', '/content/page/adopt', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'wrs_content_adopt_page',
+        'permission_callback' => 'wrs_permissions_check',
+    ));
+
+    register_rest_route('wrs/v1', '/content/page/elementor/get', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'wrs_content_elementor_get',
+        'permission_callback' => 'wrs_permissions_check',
+    ));
+
+    register_rest_route('wrs/v1', '/content/page/elementor/set', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'wrs_content_elementor_set',
+        'permission_callback' => 'wrs_permissions_check',
+    ));
 }

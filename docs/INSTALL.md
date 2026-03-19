@@ -25,15 +25,52 @@ The first-run default is `Allow all IPs during setup` so a beginner can connect 
 
 Upload only the `.zip` file. Do not upload the whole folder and do not upload `plugin.config.json`.
 
-## Verify
+## Deploy the server config
 
-Run:
+```bash
+python cli/wrs.py setup deploy-config
+```
+
+## Run the preflight check
+
+After deploying the config, run the full preflight before doing anything else:
+
+```bash
+python cli/wrs.py preflight
+```
+
+The preflight verifies eight things in sequence:
+
+| Check | What it verifies |
+|-------|-----------------|
+| Local config | Required fields present in `~/.wrs/sites/<site>/local.config.json` |
+| Site reachable | The WordPress site URL responds over HTTP |
+| Plugin ping (auth) | An authenticated request reaches the plugin and the token is valid |
+| Server health | Server reports `status=ok` |
+| Server config file | `plugin.config.json` exists at the expected server path |
+| Circuit breaker | CLOSED — writes are allowed |
+| Content module | The content module is enabled |
+| PHP environment | PHP version, memory limit, max execution time (informational) |
+
+All eight checks must pass before operating. Any failure prints the exact reason and the remediation command to run.
+
+## Verify (quick alternative)
+
+If you want a quick one-liner check:
 
 ```bash
 python cli/wrs.py status
 ```
 
 If the plugin is reachable and the token/config are correct, the CLI prints server metadata and module status.
+
+## Pairing a new machine (no re-install needed)
+
+If the plugin is already installed and you are on a different machine:
+
+1. In WordPress Admin → WP Remote Shell, click **Generate CLI Pairing Code**
+2. Run: `python cli/wrs.py pair <hex-code>`
+3. Run: `python cli/wrs.py preflight`
 
 ## Maintenance
 

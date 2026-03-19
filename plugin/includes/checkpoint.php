@@ -27,15 +27,25 @@ function wrs_page_snapshot($post) {
         return null;
     }
 
-    return array(
-        'id' => $post->ID,
-        'slug' => $post->post_name,
-        'title' => $post->post_title,
-        'status' => $post->post_status,
-        'html' => (string) get_post_meta($post->ID, '_wrs_source_html', true),
-        'css' => (string) get_post_meta($post->ID, '_wrs_css', true),
-        'canvas' => (bool) get_post_meta($post->ID, '_wrs_canvas', true),
+    $snapshot = array(
+        'id'        => $post->ID,
+        'slug'      => $post->post_name,
+        'title'     => $post->post_title,
+        'status'    => $post->post_status,
+        'page_mode' => get_post_meta($post->ID, '_wrs_page_mode', true) ?: 'html',
+        'html'      => (string) get_post_meta($post->ID, '_wrs_source_html', true),
+        'css'       => (string) get_post_meta($post->ID, '_wrs_css', true),
+        'canvas'    => (bool) get_post_meta($post->ID, '_wrs_canvas', true),
     );
+
+    // Capture Elementor data so Elementor pages can be rolled back safely.
+    if (get_post_meta($post->ID, '_elementor_edit_mode', true) === 'builder') {
+        $raw = get_post_meta($post->ID, '_elementor_data', true);
+        $snapshot['elementor_data']          = is_string($raw) ? json_decode($raw, true) : ($raw ?: null);
+        $snapshot['elementor_page_settings'] = get_post_meta($post->ID, '_elementor_page_settings', true) ?: array();
+    }
+
+    return $snapshot;
 }
 
 function wrs_create_checkpoint($op_id, $op_type, $targets) {
@@ -115,23 +125,45 @@ function wrs_restore_checkpoint($checkpoint_id, $dry_run = false) {
     }
 
     if ($snapshot) {
-        $post_id = $existing ? $existing->ID : 0;
+        $post_id   = $existing ? $existing->ID : 0;
+        $page_mode = $snapshot['page_mode'] ?? 'html';
+
         $postarr = array(
-            'post_title' => $snapshot['title'],
-            'post_name' => $snapshot['slug'],
-            'post_type' => 'page',
+            'post_title'  => $snapshot['title'],
+            'post_name'   => $snapshot['slug'],
+            'post_type'   => 'page',
             'post_status' => $snapshot['status'],
-            'post_content' => wrs_render_page_content($snapshot['html'], $snapshot['css'], get_post_meta($snapshot['id'], '_wrs_css_mode', true) ?: 'inline'),
         );
+        // Only overwrite post_content for HTML pages.
+        // Elementor manages post_content itself; overwriting it breaks the page.
+        if ($page_mode !== 'elementor') {
+            $postarr['post_content'] = wrs_render_page_content(
+                $snapshot['html'],
+                $snapshot['css'],
+                get_post_meta($snapshot['id'], '_wrs_css_mode', true) ?: 'inline'
+            );
+        }
         if ($post_id) {
             $postarr['ID'] = $post_id;
             wp_update_post($postarr);
         } else {
             $post_id = wp_insert_post($postarr);
         }
-        update_post_meta($post_id, '_wrs_source_html', $snapshot['html']);
-        update_post_meta($post_id, '_wrs_css', $snapshot['css']);
-        update_post_meta($post_id, '_wrs_canvas', $snapshot['canvas'] ? 1 : 0);
+
+        if ($page_mode === 'elementor' && !empty($snapshot['elementor_data'])) {
+            $json = wp_json_encode($snapshot['elementor_data'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            update_post_meta($post_id, '_elementor_data', wp_slash($json));
+            if (!empty($snapshot['elementor_page_settings'])) {
+                update_post_meta($post_id, '_elementor_page_settings', $snapshot['elementor_page_settings']);
+            }
+            // Clear Elementor's CSS cache so styles regenerate on next page view.
+            delete_post_meta($post_id, '_elementor_css');
+        } else {
+            update_post_meta($post_id, '_wrs_source_html', $snapshot['html']);
+            update_post_meta($post_id, '_wrs_css', $snapshot['css']);
+            update_post_meta($post_id, '_wrs_canvas', $snapshot['canvas'] ? 1 : 0);
+        }
+
         $page = get_post($post_id);
         return array('checkpoint_id' => $checkpoint_id, 'page' => wrs_page_response($page));
     }
