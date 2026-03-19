@@ -251,17 +251,46 @@ setup/output/<site>/wp-config-line.txt     line to paste into wp-config.php
 <project_path>/pages-css/                  your local CSS files
 ```
 
+`<site>` is the site folder name that WRS derives from your WordPress URL.
+
+Example:
+
+- if your site URL is `https://example.com`, the output folder is `setup/output/example.com/`
+- if your site URL is `https://clientsite.com`, the output folder is `setup/output/clientsite.com/`
+
+Before you continue, open that folder and confirm that these two files exist:
+
+- `wp-remote-shell.zip`
+- `wp-config-line.txt`
+
+If you do not see them, the wizard did not finish successfully. Run `python setup/wizard.py` again and note the site URL you enter, because that determines the `<site>` folder name.
+
 ### Step 5: Upload the plugin in WordPress
 
 This is one of the very few browser steps.
 
 In WordPress Admin:
 
-1. Go to `Plugins`
-2. Click `Add New`
-3. Click `Upload Plugin`
-4. Upload `setup/output/<site>/wp-remote-shell.zip`
-5. Activate the plugin
+1. Log in to your WordPress Admin dashboard.
+2. Go to `Plugins`.
+3. Click `Add New Plugin` or `Add New`.
+4. Click `Upload Plugin` near the top of the page.
+5. Click `Choose File`.
+6. Select `setup/output/<site>/wp-remote-shell.zip` from your local project folder.
+7. Click `Install Now`.
+8. After WordPress finishes uploading and installing it, click `Activate Plugin`.
+
+Important:
+
+- upload the `.zip` file itself, not the whole `setup/output/<site>/` folder
+- do not unzip the file manually before uploading
+- `plugin.config.json` is not the file you upload in WordPress
+
+Example on this repo:
+
+```text
+setup/output/example.com/wp-remote-shell.zip
+```
 
 ### Step 6: Add the WRS config path to `wp-config.php`
 
@@ -277,9 +306,19 @@ It contains a line like:
 define('WRS_CONFIG_PATH', dirname(__FILE__) . '/wp-content/uploads/wrs/plugin.config.json');
 ```
 
-Add that line to `wp-config.php`.
+Copy that one line and add it to your site's `wp-config.php` file.
+
+Good place to put it:
+
+- above the line that says `/* That's all, stop editing! Happy publishing. */`
 
 This tells the plugin where to load its secure runtime configuration from.
+
+Important:
+
+- paste the contents of `wp-config-line.txt` into `wp-config.php`
+- do not paste the filename itself
+- do not edit `plugin.config.json` by hand
 
 ### Step 7: Deploy the server config
 
@@ -290,6 +329,14 @@ python cli/wrs.py setup deploy-config
 ```
 
 This sends the generated `plugin.config.json` to the WordPress server through the authenticated WRS channel.
+
+If this is your first time setting up a site, the order is:
+
+1. run the wizard
+2. upload and activate the plugin in WordPress
+3. add the generated `WRS_CONFIG_PATH` line to `wp-config.php`
+4. run `python cli/wrs.py setup deploy-config`
+5. run the verification commands below
 
 ### Step 8: Verify everything works
 

@@ -5,12 +5,19 @@
 1. `pip install -r requirements.txt`
 2. `python setup/wizard.py`
 3. Review the generated files in `setup/output/<site>/`
+4. Confirm that `wp-remote-shell.zip` and `wp-config-line.txt` exist in that folder
+
+`<site>` is the folder name derived from the WordPress site URL you entered in the wizard. For example, `https://example.com` produces `setup/output/example.com/`.
 
 ## WordPress setup
 
-1. Upload `wp-remote-shell.zip`
-2. Activate the plugin
-3. Add the generated `WRS_CONFIG_PATH` define to `wp-config.php`
+1. In WordPress Admin, go to `Plugins` > `Add New` > `Upload Plugin`
+2. Upload `setup/output/<site>/wp-remote-shell.zip`
+3. Activate the plugin
+4. Open `setup/output/<site>/wp-config-line.txt`
+5. Copy its single `define('WRS_CONFIG_PATH', ...)` line into `wp-config.php`
+
+Upload only the `.zip` file. Do not upload the whole folder and do not upload `plugin.config.json`.
 
 ## Verify
 
